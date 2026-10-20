@@ -549,6 +549,8 @@ namespace casadi {
   template<>      struct CommChecker<OP_AND>{ static const bool check=true;};
   template<>      struct CommChecker<OP_OR>{ static const bool check=true;};
   template<>      struct CommChecker<OP_HYPOT>{ static const bool check=true;};
+  template<>      struct CommChecker<OP_FMIN>{ static const bool check=true;};
+  template<>      struct CommChecker<OP_FMAX>{ static const bool check=true;};
   ///@}
 
   ///@{
@@ -874,7 +876,7 @@ namespace casadi {
   struct BinaryOperation<OP_COPYSIGN>{
     template<typename T> static inline void fcn(const T& x, const T& y, T& f) { f = copysign(x, y);}
     template<typename T> static inline void der(const T& x, const T& y, const T& f, T* d) {
-        T e = 1; d[0]=copysign(e, y); d[1]=0;}
+        T e = 1; d[0]=copysign(e, y)*sign(x); d[1]=0;}
   };
 
   /// Minimum

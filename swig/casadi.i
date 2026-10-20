@@ -418,7 +418,7 @@ def SX_from_array(m, check_only=True):
 def DM_from_csc(m, check_only=True):
   if hasattr(m,"tocsc"):
     m = m.tocsc()
-  if m.__class__.__name__ == "csc_matrix":
+  if m.__class__.__name__ in ["csc_matrix", "csc_array"]:
     if len(m.shape)!=2: return False
     if check_only: return True
     return m.shape + (m.indptr.flat,m.indices.flat,m.data.flat)
@@ -983,6 +983,11 @@ namespace std {
     bool to_ptr(GUESTOBJECT *p, bool** m) {
       // Treat Null
       if (is_null(p)) return false;
+
+#ifdef SWIGJULIA
+      // SWIG_AsVal(bool) accepts any whole number; only Bool is a bool
+      if (!jl_typeis(p, jl_bool_type)) return false;
+#endif // SWIGJULIA
 
       // Standard typemaps
       if (SWIG_IsOK(SWIG_AsVal(bool)(p, m ? *m : 0))) return true;
@@ -3129,6 +3134,11 @@ class _SupportsDM(Protocol):
     def __DM__(self) -> DM: ...
 
 @runtime_checkable
+class _SupportsTocsc(Protocol):
+    """A scipy.sparse matrix or array, as accepted by ``to_ptr<DM>()``."""
+    def tocsc(self) -> Any: ...
+
+@runtime_checkable
 class _SupportsSX(Protocol):
     def __SX__(self) -> SX: ...
 
@@ -3251,7 +3261,7 @@ class ArrayInterfaceMX(ArrayInterface[MX]):
  * just caused overload-resolution failures that differed between
  * Python/numpy-version combinations.  `NDArray[Any]` is
  * version-agnostic. */
-%stub_alias_in(DM, bool | int | float | DM | Sparsity | _SupportsDM | Sequence[bool | int | float] | Sequence[Sequence[bool | int | float]] | NDArray[Any] | %arg(np.floating[Any]) | %arg(np.integer[Any]) | np.bool_)
+%stub_alias_in(DM, bool | int | float | DM | Sparsity | _SupportsDM | _SupportsTocsc | Sequence[bool | int | float] | Sequence[Sequence[bool | int | float]] | NDArray[Any] | %arg(np.floating[Any]) | %arg(np.integer[Any]) | np.bool_)
 %stub_alias_in(SX, SX | _SupportsSX | _DM)
 %stub_alias_in(MX, MX | _SupportsMX | _DM)
 /* IM is casadi::Matrix<casadi_int>: typemaps only, no Python class is
@@ -5382,6 +5392,13 @@ namespace casadi{
       warnings.simplefilter("ignore")
       from scipy.sparse import csc_matrix
     return csc_matrix( (self.nonzeros(),self.row(),self.colind()), shape = self.shape, dtype=np.double )
+  def tocsc_array(self):
+    import numpy as np
+    import warnings
+    with warnings.catch_warnings():
+      warnings.simplefilter("ignore")
+      from scipy.sparse import csc_array
+    return csc_array( (self.nonzeros(),self.row(),self.colind()), shape = self.shape, dtype=np.double )
   def toarray(self,simplify=False):
     import numpy as np
     if simplify:
@@ -5401,6 +5418,7 @@ namespace casadi{
  * here keeps the stub independent of an optional dependency.  `Any` is the
  * least-bad option until we also bridge scipy.sparse types. */
 %stub_method0(tocsc,    Any)
+%stub_method0(tocsc_array, Any)
 %stub_method(toarray,   %arg(NDArray[np.float64] | float), simplify: bool = ...)
 %stub_method0(to_numpy, %arg(NDArray[np.float64]))
 

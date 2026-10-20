@@ -362,6 +362,8 @@ calc_function(OracleMemory* m, const std::string& fcn,
       if (monitored) casadi_message(name_ + ":" + fcn + " failed");
       return 1;
     }
+  } catch(KeyboardInterruptException&) {
+    throw;
   } catch(std::exception& ex) {
     // Fatal error: Generate stack trace
     casadi_error("Error in " + name_ + ":" + fcn + ":" + std::string(ex.what()));
@@ -430,7 +432,8 @@ std::string OracleFunction::generate_dependencies(const std::string& fname,
   CodeGenerator gen(fname, opts);
   gen.add(oracle_);
   for (auto&& e : all_functions_) {
-    if (e.second.jit) gen.add(e.second.f);
+    // After jit_dependencies, f is the loaded External: generate from the original
+    if (e.second.jit) gen.add(e.second.f_original.is_null() ? e.second.f : e.second.f_original);
   }
   return gen.generate();
 }

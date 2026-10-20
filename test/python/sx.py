@@ -1231,6 +1231,20 @@ class SXtests(casadiTestCase):
       with self.assertRaises(RuntimeError):
         d = x / c
 
+  def test_copysign_derivatives(self):
+    def check(x, y):
+      z = ca.copysign(x,y)
+      f = ca.Function("f", [x,y], [ca.jacobian(z,x), ca.gradient(z,x),
+                                 ca.jtimes(z,x,1), ca.jtimes(z,x,1,True),
+                                 ca.jacobian(z,y)])
+      for x0 in (-2,0,2):
+        for y0 in (-0.5,-0.0,0.0,0.5):
+          with self.subTest(symbolic=type(x).__name__, x=x0, y=y0):
+            d = np.sign(x0)*np.copysign(1,y0)
+            self.checkarray(ca.vertcat(*f(x0,y0)),ca.DM([d,d,d,d,0]))
+    check(ca.SX.sym("x"), ca.SX.sym("y"))
+    check(ca.MX.sym("x"), ca.MX.sym("y"))
+
   def test_copysign(self):
     x = ca.SX.sym("x")
     y = ca.SX.sym("y")
@@ -1294,14 +1308,14 @@ class SXtests(casadiTestCase):
     J_in[0]=-2
     J_in[1]=0.5
     J_out = J.call(J_in)
-    self.checkarray(J_out[0],ca.DM([1]))
+    self.checkarray(J_out[0],ca.DM([-1]))
 
     J_in = [0]*J.n_in()  # type: list
 
     J_in[0]=-2
     J_in[1]=-0.5
     J_out = J.call(J_in)
-    self.checkarray(J_out[0],ca.DM([-1]))
+    self.checkarray(J_out[0],ca.DM([1]))
 
     J_in = [0]*J.n_in()  # type: list
 
@@ -1934,6 +1948,16 @@ class SXtests(casadiTestCase):
 
     self.checkarray(ca.logsumexp(ca.vertcat(100,1000,10000)),f(ca.vertcat(100,1000,10000)))
 
+    # Max not at the end: the shift must be the true max
+    for v in [ca.vertcat(0,1000,1), ca.vertcat(1000,0,1), ca.vertcat(0,1,1000), ca.vertcat(5,1e5,3,2,1e5-1)]:
+      a = np.array(v).ravel()
+      ref = a.max()+np.log(np.sum(np.exp(a-a.max())))
+      self.checkarray(ca.logsumexp(v),ref)
+      xm = ca.MX.sym("x",v.shape[0])
+      fm = ca.Function("fm",[xm],[ca.logsumexp(xm)])
+      self.checkarray(fm(v),ref)
+      self.check_codegen(fm,inputs=[v])
+
   def test_extract_parametric_call_sx(self):
     x = ca.MX.sym("x")
     y = ca.MX.sym("y")
@@ -2108,6 +2132,15 @@ class SXtests(casadiTestCase):
     self.checkarray(ca.DM(f(-7, 2)), ca.DM([-0.6569865987, 2, -1, -2, 1, 7.2801098893, -7]))
     q, r = divmod(ca.DM(7), ca.DM(2))
     self.checkarray(ca.vertcat(q, r), ca.DM([3, 1]))
+
+  def test_large_whole_constants(self):
+    # issue #4432: whole numbers beyond the int range must not saturate
+    for v in [3e9, 6.02214076e23, -1e20, 2.0**31, -2.0**31-1, 2.0**63, 1e300]:
+      self.assertEqual(float(ca.evalf(ca.SX(v))), v)
+      self.assertEqual(float(ca.evalf(ca.MX(v))), v)
+    for v in [2.0**31-1, -2.0**31]:
+      self.assertTrue(ca.SX(v).is_integer())
+      self.assertEqual(float(ca.evalf(ca.SX(v))), v)
 
 
 if __name__ == '__main__':

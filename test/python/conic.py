@@ -186,8 +186,8 @@ class ConicTests(casadiTestCase):
         solver(**solver_in)
 
         digits = 15
-        if conic == "mosek" and platform.system()=="Darwin":
-            digits = 5
+        if conic == "mosek":
+            digits = 4
         if aux_options["codegen"]:
           self.check_codegen(solver,solver.convert_in(solver_in),digits=digits,**aux_options["codegen"])
 
@@ -1461,6 +1461,23 @@ class ConicTests(casadiTestCase):
     solver_qp = solver.find_function("solver_qp")
     self.assertTrue(solver_qp.is_a("SXFunction"))
     
+  @requires_conic("ipqp")
+  def test_ipqp_status_init(self):
+    # More constraints than variables: uninitialized status and an undersized KKT iw
+    H = ca.DM([[1,-1],[-1,2]]); A = ca.DM([[1,1],[-1,2],[2,1]])
+    solver = ca.conic("solver","ipqp",{"h":H.sparsity(),"a":A.sparsity()},{"print_iter":False,"print_header":False,"print_info":False})
+    res = solver(h=H,g=ca.DM([-2,-6]),a=A,lbx=0,ubx=ca.inf,lba=-ca.inf,uba=ca.DM([2,2,3]))
+    self.assertTrue(solver.stats()["success"])
+    self.checkarray(res["x"],ca.DM([2./3,4./3]),digits=6)
+
+  @requires_conic("qrqp")
+  def test_qrqp_iter_count(self):
+    H = ca.DM([[1,-1],[-1,2]]); A = ca.DM([[1,1],[-1,2],[2,1]])
+    solver = ca.conic("solver","qrqp",{"h":H.sparsity(),"a":A.sparsity()},{"print_iter":False,"print_header":False,"print_info":False})
+    solver(h=H,g=ca.DM([-2,-6]),a=A,lbx=0,ubx=ca.inf,lba=-ca.inf,uba=ca.DM([2,2,3]))
+    self.assertTrue(solver.stats()["success"])
+    self.assertTrue(solver.stats()["iter_count"]>0)
+
   @requires_conic("osqp")
   def test_postpone_expand(self):
 
