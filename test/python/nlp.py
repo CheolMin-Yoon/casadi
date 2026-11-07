@@ -32,6 +32,7 @@ from types import *
 from numpy import array
 from helpers import args, casadiTestCase, codegen_check_digits, memory_heavy, requires_conic, requires_nlpsol
 import itertools
+from typing import Any
 import copy
 from casadi.tools import capture_stdout
 
@@ -1859,6 +1860,24 @@ class NLPtests(casadiTestCase):
       self.checkfunction_light(f,f2,[0,0.5],digits=6)
 
   @requires_conic("qrqp")
+  def test_nlp_sensitivity_equality_zero_multiplier(self):
+    # Equality constraint and fixed variable with zero multipliers
+    x = ca.MX.sym("x",3)
+    p = ca.MX.sym("p")
+    nlp = {"x":x,"p":p,"f":(x[0]-p)**2,"g":x[1]-x[0]}
+    solver = ca.nlpsol("solver","sqpmethod",nlp,{"qpsol":"qrqp","qpsol_options":{"print_iter":False,"print_header":False},
+                                                 "print_iteration":False,"print_header":False,"print_status":False,
+                                                 "sens_force_equality":True})
+    r = solver(p=p,lbg=0,ubg=0,lbx=ca.vertcat(-inf,-inf,p),ubx=ca.vertcat(inf,inf,p))
+    lam = ca.Function("lam",[p],[ca.vertcat(r["lam_g"],r["lam_x"])])(0)
+    self.assertTrue(ca.norm_inf(lam)==0)
+    z = r["x"]
+    z2 = ca.vertcat(p,p,p)
+    f = ca.Function("f",[p],[z,ca.jacobian(z,p)])
+    f2 = ca.Function("f",[p],[z2,ca.jacobian(z2,p)])
+    self.checkfunction_light(f,f2,inputs=[0],digits=8)
+
+  @requires_conic("qrqp")
   def test_regularize_sqpmethod(self):
 
     # Test problem that is indefinite in direction of the constraint Jacobian
@@ -2790,6 +2809,63 @@ class NLPtests(casadiTestCase):
     self.assertTrue(solver.stats()["success"])
     self.checkfunction_light(ref_solver.get_function("nlp_jac_g"),solver.get_function("nlp_jac_g"),inputs=[ca.vertcat(0.11,0.3,0.7),0])
     
+  @requires_nlpsol("sqpmethod")
+  @requires_conic("qrqp")
+  def test_calc_lam_x_codegen(self):
+    x = ca.MX.sym("x", 2)
+    nlp = {"x": x, "f": ca.sumsqr(x-3), "g": x[0]+x[1]}
+    opts = {"qpsol": "qrqp", "calc_lam_x": True, "print_header": False,
+            "print_iteration": False, "print_time": False,
+            "qpsol_options": {"print_iter": False, "print_header": False}}
+    solver = ca.nlpsol("solver", "sqpmethod", nlp, opts)
+    solver_in = {"x0": [0, 0], "lbx": [-10, -10], "ubx": [0.2, 10], "lbg": -10, "ubg": 1}
+    solver_out = solver(**solver_in)
+    self.checkarray(solver_out["lam_x"], ca.DM([1.2, 0]), digits=8)
+    self.checkarray(solver_out["lam_g"], 4.4, digits=8)
+    self.check_codegen(solver, solver_in, std="c99")
+
+  @requires_nlpsol("sqpmethod")
+  @requires_conic("qrqp")
+  def test_detect_simple_bounds_g(self):
+    # Scaled, offset and parametric simple bounds: g as without detection
+    x = ca.MX.sym("x", 2)
+    p = ca.MX.sym("p")
+    nlp = {"x": x, "p": p, "f": ca.sumsqr(x-3), "g": ca.vertcat(2*x[0]+1, x[1]-p, x[0]+x[1])}
+    opts = {"qpsol": "qrqp", "print_header": False, "print_iteration": False, "print_time": False,
+            "qpsol_options": {"print_iter": False, "print_header": False}}
+    solver_ref = ca.nlpsol("solver", "sqpmethod", nlp, opts)
+    solver = ca.nlpsol("solver", "sqpmethod", nlp, dict(opts, detect_simple_bounds=True))
+    for x0 in [[0, 0], [0.5, -1]]:
+      solver_in = {"x0": x0, "p": 1, "lbg": [-10, -10, -10], "ubg": [3, 0.5, 10]}
+      self.checkfunction_light(solver, solver_ref, inputs=solver_in, digits=8)
+      self.check_codegen(solver, solver_in, std="c99")
+
+  @requires_nlpsol("sqpmethod")
+  @requires_conic("qrqp")
+  def test_detect_simple_bounds_failure(self):
+    # A failing evaluation of the bounds fails the solver, in generated code too
+    x = ca.MX.sym("x", 2)
+    p = ca.MX.sym("p")
+    q = p.attachAssert(p>=0, "p must be nonnegative")
+    nlp = {"x": x, "p": p, "f": ca.sumsqr(x-3), "g": x[0]-q}
+    opts = {"qpsol": "qrqp", "print_header": False, "print_iteration": False, "print_time": False,
+            "qpsol_options": {"print_iter": False, "print_header": False},
+            "detect_simple_bounds": True}
+    solver = ca.nlpsol("solver", "sqpmethod", nlp, opts)
+    with self.assertInException("p must be nonnegative"):
+      solver(p=-1, ubg=0)
+    cg = ca.CodeGenerator("detect_bounds_fail")
+    cg.add(solver)
+    F = ca.external("solver", ca.Importer(cg.generate(), "shell"))
+    self.checkarray(F(p=1, ubg=0)["x"], ca.DM([1, 3]), digits=6)
+    with self.assertRaises(RuntimeError):
+      F(p=-1, ubg=0)
+
+  def test_nlp_signature(self):
+    x = ca.MX.sym("x")
+    with self.assertInException("must have inputs (x, p) and outputs (f, g)"):
+      ca.nlpsol("solver", "ipopt", ca.Function("nlp", [x], [x**2], ["a"], ["b"]))
+
   @requires_nlpsol("ipopt")
   def test_option_propagation(self):
     x = ca.MX.sym('x')
@@ -2832,6 +2908,30 @@ class NLPtests(casadiTestCase):
     self.assertTrue(spread>0)
     self.assertTrue(spread<1e-4)
     """
+
+  def test_thread_map_reuses_solver_memory(self):
+    # The ipopt journal held a pointer to the thread_local casadi::uout() of the thread that
+    # created the solver memory. map(..., "thread") starts new threads on every call, so the
+    # second call wrote to a destroyed stream and crashed, even with printing off.
+    # (bonmin builds its journal per solve, so it was safe; it is covered as a guard.)
+    cases: list[tuple[str, dict[str, Any]]] = [
+      ("ipopt", {}),
+      ("ipopt", {"ipopt.print_level": 0, "ipopt.sb": "yes", "print_time": False}),
+      ("bonmin", {}),
+    ]
+    if not any(ca.has_nlpsol(plugin) for plugin, _ in cases): self.skipTest("needs ipopt or bonmin")
+    for plugin, opts in cases:
+      if not ca.has_nlpsol(plugin): continue
+      print("test_thread_map_reuses_solver_memory", plugin, opts)
+      x = ca.MX.sym("x", 2)
+      p = ca.MX.sym("p")
+      solver = ca.nlpsol("solver", plugin, {"x": x, "p": p, "f": ca.sumsqr(x - p)}, opts)
+      P = ca.MX.sym("P")
+      par = ca.Function("par", [P], [solver(x0=0, p=P)["x"][0]])
+      m = par.map(8, "thread", 4)
+      ps = ca.DM(list(range(8))).T
+      for k in range(5):
+        self.checkarray(m(ps), ps, digits=6)
 
 if __name__ == '__main__':
     unittest.main()

@@ -20,10 +20,7 @@
 # collocation coefficients by hand (no integrator plugin) -> fully portable.
 # numpy poly1d/polyder/polyint are replaced by small array-based helpers
 # (coefficients highest-degree-first, like numpy.poly1d).
-const _jl_dir = get(ENV, "CASADI_JL",
-    joinpath(@__DIR__, "..", "..", "..", "julia-proto", "casadi-contact"))
-include(joinpath(_jl_dir, "CasADiNative.jl"))
-import .CasADiNative as ca
+import CasADiNative as ca
 
 # Polynomial helpers (coeffs highest-degree-first, like numpy.poly1d)
 function polymul(a, b)
@@ -74,11 +71,11 @@ function main()
     # Declare model variables
     x1 = ca.SX.sym("x1")
     x2 = ca.SX.sym("x2")
-    x = ca.vertcat(x1, x2)
+    x = [x1; x2]
     u = ca.SX.sym("u")
 
     # Model equations
-    xdot = ca.vertcat((1 - x2^2) * x1 - x2 + u, x1)
+    xdot = [((1 - x2^2) * x1 - x2 + u); x1]
 
     # Objective term
     L = x1^2 + x2^2 + u^2
@@ -149,12 +146,12 @@ function main()
     end
 
     # Create an NLP solver
-    prob = Dict("f" => J, "x" => ca.vertcat(w), "g" => ca.vertcat(g))
+    prob = Dict("f" => J, "x" => vcat(w...), "g" => vcat(g...))
     solver = ca.nlpsol("solver", "ipopt", prob)
 
     # Function to get x and u trajectories from w
-    W = ca.vertcat(w)
-    trajectories = ca.Function("trajectories", [W], [ca.horzcat(x_plot), ca.horzcat(u_plot)],
+    W = vcat(w...)
+    trajectories = ca.Function("trajectories", [W], [hcat(x_plot...), hcat(u_plot...)],
                               ["w"], ["x", "u"])
 
     # Solve the NLP

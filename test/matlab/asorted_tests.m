@@ -227,6 +227,11 @@ length(MX.sym('x',4,1))
 assert(length(MX.sym('x',4,1))==4)
 assert(length(MX.sym('x',1,3))==3)
 assert(length(MX.sym('x',4,5))==5)
+% issue #2816: length of an empty matrix is 0, like MATLAB
+assert(length(MX.sym('x',4,0))==0)
+assert(length(DM.zeros(2,0))==0)
+assert(length(SX(0,3))==0)
+assert(length(Sparsity(0,3))==0)
 
 [n,m] = size(MX.sym('x',4,5));
 assert(n==4)
@@ -992,6 +997,70 @@ assert(isa(m, 'casadi.DM') && isequal(full(m), [1 2 0; 0 0 3]));
 m = casadi.vvcat({DM([1; 2]), DM([3; 4])});
 assert(isa(m, 'casadi.DM') && isequal(full(m), [1; 2; 3; 4]));
 
+
+% Chained indexing acts on the result of the first subscript
+B = DM([1 2 3; 4 5 6]);
+assert(strcmp(B(1, :).dim(), '1x3'));
+assert(strcmp(B(2:1, :).dim(), '0x3'));
+v = SX.sym('v', 2);
+assert(strcmp(v(2).name(), 'v_1'));
+if ~is_octave
+  % Method reference without parentheses as a function argument
+  xe = DM.eye(2);
+  assert(strcmp(str(xe.sparsity), '2x2,2nz'));
+end
+
+% Sparsity transpose
+sp = Sparsity.lower(2);
+assert(sp' == Sparsity.upper(2));
+assert(sp.' == Sparsity.upper(2));
+
+% Sparsity intersection is .*, * is the matrix product pattern
+assert(Sparsity.diag(2) .* Sparsity.dense(2, 2) == Sparsity.diag(2));
+assert(mtimes(Sparsity.diag(2), Sparsity.dense(2, 1)) == Sparsity.dense(2, 1));
+assert(Sparsity.diag(2) * Sparsity.dense(2, 1) == Sparsity.dense(2, 1));
+
+% Package functions without a casadi object first
+assert(isequal(casadi.offset({DM(1), DM([1; 2])}), [0 1 3]));
+assert(isequal(full(blockcat(1, 2, 3, 4)), [1 2; 3 4]));
+assert(strcmp(casadi.diagcat().dim(), '0x0'));
+assert(strcmp(casadi.veccat().dim(), '0x1'));
+
+% [] for a dimension in reshape
+assert(strcmp(reshape(DM.eye(2), [], 1).dim(), '4x1'));
+assert(strcmp(reshape(DM.eye(2), 1, []).dim(), '1x4'));
+
+% inv is the matrix inverse for MX too
+A = MX.sym('A', 2, 2);
+f = Function('f', {A}, {inv(A), inv(A, 'qr')});
+[r1, r2] = f(DM([2 0; 0 4]));
+assert(norm(full(r1) - [0.5 0; 0 0.25]) < 1e-12);
+assert(norm(full(r2) - [0.5 0; 0 0.25]) < 1e-12);
+
+% einstein and bspline_dual as free functions
+a = MX.sym('a', 4);
+C = einstein(a, a, [2 2], [2 2], [2 2], [-1 -2], [-2 -3], [-1 -3]);
+assert(strcmp(C.dim(), '4x1'));
+B = bspline_dual([0.5 1.5], {[0 0 0 0 1 2 2 2 2]}, 3);
+assert(all(size(B) == [2 5]));
+
+% DaeBuilder variable lookup with the call syntax
+dae = DaeBuilder('m');
+xs = dae.add('x');
+assert(is_equal(dae('x'), xs));
+
+% OptiAdvanced.casadi_solver, deprecated solver(), and the inherited solver(name, ...)
+opti = Opti();
+x = opti.variable();
+opti.minimize(x^2);
+opti.solver('ipopt', struct('print_time', false), struct('print_level', 0, 'sb', 'yes'));
+opti.solve();
+assert(strcmp(opti.debug.casadi_solver().name(), 'solver'));
+lastwarn('');
+assert(strcmp(opti.debug.solver().name(), 'solver'));
+[~, id] = lastwarn();
+assert(strcmp(id, 'casadi:deprecated'));
+opti.debug.solver('sqpmethod', struct('qpsol', 'qrqp', 'print_time', false));
 
 disp('success')
 

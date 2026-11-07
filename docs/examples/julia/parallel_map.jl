@@ -22,10 +22,7 @@
 # Note: the Python example also tries f.map(N, "openmp"); we use the default
 # (serial) map and note it. The expensive function uses 2000 nested sin()
 # here (vs 100000) to keep the run snappy.
-const _jl_dir = get(ENV, "CASADI_JL",
-    joinpath(@__DIR__, "..", "..", "..", "julia-proto", "casadi-contact"))
-include(joinpath(_jl_dir, "CasADiNative.jl"))
-import .CasADiNative as ca
+import CasADiNative as ca
 
 function main()
     # Number of inputs to evaluate
@@ -45,7 +42,7 @@ function main()
 
     # Evaluate serially, the old-fashioned way (vertcat of N scalar calls)
     X = ca.MX.sym("x", N)
-    Y = ca.vertcat([f0(X[k]) for k in 1:N])
+    Y = vcat([f0(X[k]) for k in 1:N]...)
     fNaiveParallel = ca.Function("fParallel", [X], [Y])
 
     println("evaluating naive parallel function...")

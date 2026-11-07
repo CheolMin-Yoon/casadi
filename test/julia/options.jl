@@ -14,7 +14,7 @@
     end
     if C.has_rootfinder("kinsol")
         z, p = sym(SX, "z", 2), sym(SX, "p")
-        R = rootfinder("R", "kinsol", Dict("x" => z, "p" => p, "g" => vertcat(z[1]^3 - p, z[2] - 2p)), Dict("u_scale" => [2, 3], "print_level" => 0))
+        R = rootfinder("R", "kinsol", Dict("x" => z, "p" => p, "g" => [(z[1]^3 - p); (z[2] - 2p)]), Dict("u_scale" => [2, 3], "print_level" => 0))
         @test vec(Matrix(R(Dict("x0" => DM([1.0, 1.0]), "p" => 8.0))["x"])) ≈ [2.0, 16.0]
     end
     if HAS_IPOPT
@@ -24,4 +24,11 @@
         S(Dict("x0" => DM([-1.2, 1.0])))
         @test C.stats(S)["iter_count"] == 5
     end
+end
+
+@testset "change_option takes a plain Julia value" begin
+    f = C.Function("f_chopt", [sym(SX, "x")], [SX(0)])
+    C.change_option(f, "verbose", false)
+    C.change_option(f, "verbose", 0)
+    @test Float64(f(1)) == 0
 end

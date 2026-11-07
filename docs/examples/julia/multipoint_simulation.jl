@@ -19,17 +19,14 @@
 # Simulate a Van der Pol-like system over a grid of N intervals with piecewise
 # constant controls, also accumulating the integral of a quadrature y.
 # "rk" stands in for the python "cvodes" integrator.
-const _jl_dir = get(ENV, "CASADI_JL",
-    joinpath(@__DIR__, "..", "..", "..", "julia-proto", "casadi-contact"))
-include(joinpath(_jl_dir, "CasADiNative.jl"))
-import .CasADiNative as ca
+import CasADiNative as ca
 
 # Nonlinear system with two states and one control input
 x1 = ca.MX.sym("x1")
 x2 = ca.MX.sym("x2")
-x = ca.vertcat(x1, x2)
+x = [x1; x2]
 u = ca.MX.sym("u")
-xdot = ca.vertcat((1 - x2^2) * x1 - x2 + u, x1)
+xdot = [((1 - x2^2) * x1 - x2 + u); x1]
 
 # Sum-of-squares distance from the origin
 y = x1^2 + x2^2
@@ -56,9 +53,9 @@ function main()
     xf = Fk["xf"]
     qf = Fk["qf"]
 
-    # Prepend the state at the initial time (typed horzcat keeps it numeric DM)
-    xf = ca.horzcat(x0, xf)
-    qf = ca.horzcat(0.0, qf)
+    # Prepend the state at the initial time
+    xf = [x0 xf]
+    qf = [0.0 qf]
 
     # y at each grid point
     yf = yfun(xf)

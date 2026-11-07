@@ -1417,6 +1417,29 @@ class Functiontests(casadiTestCase):
       if r is not None:
         self.checkarray(m,r)
 
+  def test_bspline_even_degree(self):
+    # issue #3449
+    import scipy.interpolate
+    x = np.linspace(0,3,12)
+    y = np.sin(x)
+    ref = scipy.interpolate.make_interp_spline(x, y, k=2)
+    LUT = ca.interpolant('LUT','bspline',[x],y,{"degree":[2]})
+    for xe in [0,0.1,0.33,1.7,2.95,3]:
+      self.checkarray(LUT(xe), ref(xe), digits=10)
+    self.check_codegen(LUT, [0.2])
+    for k in [4,6]:
+      LUT = ca.interpolant('LUT','bspline',[x],y,{"degree":[k]})
+      self.checkarray(LUT(ca.DM(x).T), ca.DM(y).T, digits=10)
+      self.checkarray(LUT(1.234), np.sin(1.234), digits=4)
+    # 2D, mixed even/odd degrees
+    xg = np.linspace(0,1,6)
+    yg = np.linspace(0,2,7)
+    [X,Y] = np.meshgrid(xg,yg,indexing='ij')
+    V = np.cos(X)*Y
+    LUT = ca.interpolant('LUT','bspline',[xg,yg],V.ravel(order='F'),{"degree":[2,3]})
+    for i,j in [(0,0),(2,3),(5,6),(4,1)]:
+      self.checkarray(LUT(ca.vertcat(xg[i],yg[j])), V[i,j], digits=10)
+
   def test_Callback_Jacobian(self):
     x = ca.MX.sym("x")
     y = ca.MX.sym("y")
@@ -2122,6 +2145,24 @@ class Functiontests(casadiTestCase):
     self.check_serialize(f,inputs=[0.2,0.333])
 
 
+  def test_bspline_repeated_knots(self):
+    # issue #3643: evaluation exactly at a repeated interior knot
+    import scipy.interpolate
+    np.random.seed(0)
+    for degree, knots in [(3, [0,0,0,0,1,1,2,3,3,3,4,4,4,4]), (2, [0,0,0,1,1,2,2,3,3,3])]:
+      n = len(knots)-degree-1
+      c = np.random.random(n)
+      ref = scipy.interpolate.BSpline(np.array(knots,dtype=float), c, degree)
+      x = ca.MX.sym("x")
+      C = ca.MX.sym("C",n)
+      f = ca.Function('f',[x],[ca.bspline(x,ca.DM(c),[knots],[degree],1)])
+      F = ca.Function('F',[x,C],[ca.bspline(x,C,[knots],[degree],1)])
+      for xe in np.arange(0,knots[-1]+0.25,0.5):
+        self.checkarray(f(xe), ref(xe), digits=12)
+        self.checkarray(F(xe,c), ref(xe), digits=12)
+      self.check_codegen(f,inputs=[2])
+      self.check_codegen(F,inputs=[3,c])
+
   def test_parametric_bspline(self):
     knots = [[0,0,0,0,0.2,0.5,0.8,1,1,1,1],[0,0,0,0.1,0.5,0.9,1,1,1]]
     x=ca.MX.sym("x",2)
@@ -2148,6 +2189,15 @@ class Functiontests(casadiTestCase):
     self.checkfunction(f,F_pk,inputs=[ca.vertcat(0.3,0.4)])
     self.check_codegen(F_pk,inputs=[ca.vertcat(0.3,0.4)],std="c99")
 
+
+  def test_parametric_bspline_sparse_coefficients(self):
+    knots = [[0,0,0,0,1,1,1,1]]
+    x = ca.MX.sym("x")
+    coeffs = ca.sparsify(ca.DM([1,0,0,2]))
+    C = ca.MX.sym("C",coeffs.sparsity())
+    f = ca.Function("f",[x,C],[ca.bspline(x,C,knots,[3],1)])
+    # Coefficients [1,0,0,2] give (1-x)**3 + 2*x**3.
+    self.checkarray(f(0.5,coeffs),0.375)
 
   def test_smooth_linear(self):
     np.random.seed(0)
@@ -5525,6 +5575,44 @@ class Functiontests(casadiTestCase):
                 self.assertFalse("3.00" in result[0])
                 
     ca.DM.set_precision(6)
+
+  def test_forward_reverse_zero(self):
+    x = ca.SX.sym("x")
+    y = ca.SX.sym("y", 2)
+    f = ca.Function("f", [x, y], [x*y, ca.sin(x)])
+    for F in [f, f.wrap()]:
+      fwd = F.forward(0)
+      self.assertEqual(fwd.size_in(5), (2, 0))
+      self.assertEqual(fwd.size_out(0), (2, 0))
+      adj = F.reverse(0)
+      self.assertEqual(adj.size_in(4), (2, 0))
+      self.assertEqual(adj.size_out(1), (2, 0))
+
+  @requiresPlugin(ca.Importer,"shell")
+  def test_jit_function_fd(self):
+    if not args.run_slow: return
+    f = ca.Function.jit("f", "b[0] = a[0]*a[0];", ["a"], ["b"], {"compiler": "shell"})
+    self.checkarray(f.jacobian()(3, 0), ca.DM(6), digits=5)
+
+  def test_print_long(self):
+    x = ca.MX.sym("x")
+    for n in [255, 300]:
+      name = "f"*n
+      f = ca.Function(name, [x], [x**2], {"print_time": True})
+      with self.assertOutput(name + "  : ", []):
+        f(3)
+
+  def test_has_function(self):
+    x = ca.MX.sym("x")
+    f = ca.Function("f", [x], [x**2], {"never_inline": True})
+    g = ca.Function("g", [x], [f(x)+1])
+    self.assertEqual(g.get_function(), ["f"])
+    self.assertTrue(g.has_function("f"))
+    self.assertFalse(g.has_function("h"))
+
+  def test_string_ctor_hidden(self):
+    with self.assertRaises(NotImplementedError):
+      ca.Function("f")  # expect-error: reportArgumentType
 
   def test_activity(self):
     # issue #3019: value-level "signal activity" propagation (Function::activity).

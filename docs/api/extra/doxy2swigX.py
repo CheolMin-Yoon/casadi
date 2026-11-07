@@ -40,11 +40,23 @@ stem = str(pathlib.Path(cwd).parent.parent.parent)
 expression_tools = set()
 
 
+renamed_tools = {}  # C++ friend name -> casadi_<swig name>, from %rename(friend) casadi_x;
 for r in open("../../../swig/casadi.i","r"):
   if "casadi_" in r:
-    m = re.search("casadi_(\w+)", r)
-    if m:
+    for m in re.finditer(r"\bcasadi_(\w+)\s*\(", r):
       expression_tools.add(m.group(1))
+    m = re.match(r"\s*%rename\((\w+)\)\s+casadi_(\w+)\s*;", r)
+    if m and not m.group(1).startswith("_"):
+      renamed_tools[m.group(1)] = m.group(2)
+# DECL wrappers that call a friend of another name, e.g. casadi_power -> pow
+for r in open("../../../swig/casadi.i","r"):
+  m = re.search(r"\bcasadi_(\w+)\([^)]*\)\s*\{\s*(?:using [\w:]+;\s*)?return (\w+)\(", r)
+  if m and m.group(2) not in expression_tools:
+    renamed_tools.setdefault(m.group(2), m.group(1))
+
+# Classes whose friends/statics back the module-level casadi_<name> wrappers
+tool_classes = ("GenericMatrixCommon", "GenericExpressionCommon", "SparsityInterfaceCommon",
+                "MatrixCommon", "MX", "Matrix<")
 
 aliases = {}
 for line in open('../Doxyfile.in','r'):
@@ -68,13 +80,36 @@ def astext(node,whitespace=False,escape=True,strictspacing=False):
     r.append(d)
   elif hasattr(node,'tagName') and node.tagName=="sp":
     return " "
+  elif hasattr(node,'tagName') and node.tagName=="computeroutput" and not strictspacing:
+    return "``%s``" % "".join(astext(c,whitespace=whitespace,escape=escape,strictspacing=True) for c in node.childNodes).strip()
   elif hasattr(node,'childNodes'):
     for node in node.childNodes:
       r.append(astext(node,whitespace=whitespace,escape=escape,strictspacing=strictspacing))
   if strictspacing:
     return ("".join(r))
   else:
-    return (" ".join(r)).strip()
+    return tidy_spacing(" ".join(r))
+
+
+def tidy_spacing(t):
+  """Undo the blanks that joining child nodes puts before punctuation and inside brackets."""
+  t = re.sub(r"\s+([,.;:!?)\]])", r"\1", t)
+  return re.sub(r"([(\[])\s+", r"\1", t).strip()
+
+
+def tidy_lang(text):
+  """One blank line before each <lang:x> or </lang> line, none after it."""
+  out = []
+  for l in text.split("\n"):
+    if re.match(r"(<lang:\w+>|</lang>)$", l):
+      while out and out[-1] == "":
+        out.pop()
+      if out and not re.match(r"(<lang:\w+>|</lang>)$", out[-1]):
+        out.append("")
+    elif l == "" and out and re.match(r"(<lang:\w+>|</lang>)$", out[-1]):
+      continue
+    out.append(l)
+  return "\n".join(out)
 
 
 class Doxy2SWIG_X(Doxy2SWIG):
@@ -89,7 +124,8 @@ class Doxy2SWIG_X(Doxy2SWIG):
     self.groupdoc = kwargs["groupdoc"]
     del kwargs["groupdoc"]
     Doxy2SWIG.__init__(self,*args, **kwargs)
-    
+    # casadi_<name> wrappers already documented: the first (primary) overload wins
+    self.routed = set()
 
     # skip sharedobjectnode stuff
     for e in self.xmldoc.getElementsByTagName("compounddef"):
@@ -105,6 +141,7 @@ class Doxy2SWIG_X(Doxy2SWIG):
 
     self.docstringmap = {}
     self.active_docstring = None
+    self.lang = None  # open \lang group
     self.add_text_counter = 0
     self.src = args[0]
     del self.ignores[self.ignores.index("programlisting")]
@@ -171,23 +208,18 @@ class Doxy2SWIG_X(Doxy2SWIG):
                 else:
                   _tmp = i.strip()
               else:
-                _tmp = textwrap.fill(i.strip(), 80-4, break_long_words=False,drop_whitespace=False,replace_whitespace=False)
+                lines = i.strip().split("\n")
+                if not any(l.lstrip().startswith(("* ", "- ")) for l in lines):
+                  i = " ".join(l.strip() for l in lines)  # re-flow: header line breaks otherwise leak as block quotes
+                _tmp = textwrap.fill(i.strip(), 80-4, break_long_words=False,drop_whitespace=True,replace_whitespace=False)
               _tmp = self.lead_spc.sub(r'\1"\2', _tmp)
               ret.extend([_tmp, '\n\n'])
       return ret
         
   def write(self, fname):
         o = my_open_write(fname)
-        if self.multi:
-            for p in self.pieces:
-              pp = p#.encode("ascii","ignore")
-              pp = re.sub("[A-Z_]*_EXPORT ","",pp)
-              o.write(pp)
-        else:
-            for p in self.clean_pieces(self.pieces):
-              pp = p#.encode("ascii","ignore")
-              pp = re.sub("[A-Z_]*_EXPORT ","",pp)
-              o.write(pp)
+        pieces = self.pieces if self.multi else self.clean_pieces(self.pieces)
+        o.write(tidy_lang("".join(re.sub("[A-Z_]*_EXPORT ","",p) for p in pieces)))
         o.close()
         
   def do_doxygenindex(self, node):
@@ -229,29 +261,82 @@ class Doxy2SWIG_X(Doxy2SWIG):
       self.add_text(("-"*length) + "\n\n")
 
   def do_htmlonly(self,node):
-    pass
-    
+    if "class='doctest'" in astext(node, escape=False) and self.lang is None:
+      raise Exception("%s: \\doctest outside a \\lang group" % self.src)
+
+  # \lang{x} ... \endlang: SWIG keeps the section of its target language, see %feature("docstring:lang")
+  def do_casadilang(self, node):
+    if self.lang is not None:
+      raise Exception("%s: nested \\lang group" % self.src)
+    self.lang = node.attributes['name'].value
+    self.add_text("\n\n<lang:" + self.lang + ">\n\n")
+
+  def do_casadiendlang(self, node):
+    if self.lang is None:
+      raise Exception("%s: \\endlang without \\lang" % self.src)
+    self.lang = None
+    self.add_text("\n\n</lang>\n\n")
+
   def do_programlisting(self,node):
-    if True or hasattr(node.previousSibling,'tagName') and node.previousSibling.tagName=="htmlonly" and "doctest" in node.previousSibling.firstChild.data:
-      self.add_text("\n\n::\n\n")
-      for codeline in node.getElementsByTagName("codeline"):
-        self.add_text("  >>> " + astext(codeline,strictspacing=True).replace("\n","%%newline%%")+"\n")
+    self.add_text("\n\n::\n\n")
+    for codeline in node.getElementsByTagName("codeline"):
+      self.add_text("  " + astext(codeline,strictspacing=True).replace("\n","%%newline%%")+"\n")
     
     
   def do_verbatim(self, node):
-    skipheader = False
-    try:
-      if node.previousSibling.tagName=="htmlonly" and "doctest" in node.previousSibling.firstChild.data:
-        skipheader = True
-    except:
-      pass
-    if not skipheader:
-      self.add_text("\n\n::\n\n")
     text = node.firstChild.data
+    lines = text.split("\n")
+    if all(re.match(r"\s*\*( |$)", l) for l in lines if l.strip()):  # doxygen keeps '* ' comment prefixes
+      text = "\n".join(re.sub(r"^\s*\* ?", "", l) for l in lines)
     text = "\n".join(["  " +i for i in text.split("\n")])
-    
-    self.add_text(text.replace("\n","%%newline%%").replace('\\', r'\\\\').replace('"', r'\"')+"\n\n")
-    
+    text = text.replace("\n","%%newline%%").replace('\\', r'\\\\').replace('"', r'\"')
+    self.add_text("\n\n::\n\n")
+    self.add_text(text+"\n\n")
+
+  # Google-style sections: napoleon ends them at the first dedented line, so the prose that
+  # follows a \param list in the header stays prose (numpy-style sections would swallow it).
+  def do_parameterlist(self, node):
+    kind = node.attributes['kind'].value
+    title = {"param": "Parameters", "exception": "Raises"}.get(kind, kind.capitalize())
+    items = []
+    for item in node.getElementsByTagName("parameteritem"):
+      names = [astext(n).strip() for n in item.getElementsByTagName("parametername")]
+      desc = [astext(p).strip().replace("\n", " ") for p in item.getElementsByTagName("parameterdescription")[0].getElementsByTagName("para")]
+      items.append(", ".join(names) + ": " + "%%newline%%        ".join(d for d in desc if d))
+    self.add_text(["\n\n", title + ":%%newline%%    " + "%%newline%%    ".join(items), "\n\n"])
+
+  def do_simplesect(self, node):
+    kind = node.attributes['kind'].value
+    text = " ".join(astext(p).strip().replace("\n", " ") for p in node.getElementsByTagName("para"))
+    if kind == "return":
+      self.add_text(["\n\n", "Returns:%%newline%%    " + text, "\n\n"])
+    elif kind == "see":
+      self.add_text(["\n\n", "See also: " + text, "\n\n"])
+    elif kind in ("author", "authors"):
+      self.add_text(["\n\n", "Authors: " + text, "\n\n"])
+    else:
+      Doxy2SWIG.do_simplesect(self, node)
+
+  def do_ref(self, node):
+    self.add_text(astext(node))  # auto-linked names: no padding, neighbours carry the spaces
+
+  def _list(self, node, bullet):
+    items = [astext(li).replace("\n", " ") for li in node.childNodes
+             if getattr(li, "tagName", None) == "listitem"]
+    self.add_text(["\n\n", "%%newline%%".join(bullet(k) + " " + t for k, t in enumerate(items)), "\n\n"])
+
+  def do_itemizedlist(self, node):
+    self._list(node, lambda k: "-")
+
+  def do_orderedlist(self, node):
+    self._list(node, lambda k: "%d." % (k + 1))
+
+  def do_computeroutput(self, node):
+    self.add_text(astext(node))  # astext already wraps it in ``...``; neighbours carry the spaces
+
+  def do_includes(self, node):
+    pass
+
   def do_table(self, node):
     caption = node.getElementsByTagName("caption")
     if len(caption)==1:
@@ -319,7 +404,7 @@ class Doxy2SWIG_X(Doxy2SWIG):
 
   def do_sectiondef(self, node):
       kind = node.attributes['kind'].value
-      if kind in ('public-func', 'func', 'user-defined', '','friend'):
+      if kind in ('public-func', 'public-static-func', 'func', 'user-defined', '','friend'):
           self.generic_parse(node)   
 
   def do_memberdef(self, node):
@@ -426,6 +511,7 @@ class Doxy2SWIG_X(Doxy2SWIG):
         # Group together
         grouped_list = []
         grouped_dict = {}
+        emitted_once = set()
         
         def fix_signature(a): return re.sub(" *?= *?(delete|default) *?$","", a.replace("override",""))
         
@@ -434,7 +520,7 @@ class Doxy2SWIG_X(Doxy2SWIG):
           m = list(re.finditer("\[DEPRECATED(:(.*?))?\]","".join(pieces)))
           deprecated = ("" if m[-1].group(2) is None else m[-1].group(2)) if len(m)>0 else None
           
-          if origin == "huma kavula" and publicapi is not None:
+          if origin == "huma kavula" or publicapi is None:
             internal = False
           else:
             internal = True
@@ -498,6 +584,12 @@ class Doxy2SWIG_X(Doxy2SWIG):
              grouped_dict[total] = ([origin],pieces)
              grouped_list.append(grouped_dict[total])
           if not self.merge:
+            # Doxygen copies a shared doc block onto every overload; SWIG would concatenate the
+            # copies into one docstring, so emit the text only for the first overload
+            key = re.sub(r"(Doc source|Implementation):[^\n]*\n?", "", total)
+            if key in emitted_once and len(key.strip()) > 0:
+              continue
+            emitted_once.add(key)
             target = fix_signature(swigname if len(swigname)>0 else k)
             self.doc_target(target, pieces)
         if self.merge:
@@ -519,6 +611,18 @@ class Doxy2SWIG_X(Doxy2SWIG):
       self.add_text_original(["%feature(\"docstring\") ", target, " \"\n\n"]+content+["\";\n","\n"])
     if not correction: return
   def doc_target(self,target,content,correction=True):
+    # SWIG wraps Matrix<Scalar> only as its DM/SX instantiations: target those explicitly
+    if correction and re.match(r"\s*casadi::Matrix\s*(<\s*Scalar\s*>)?\s*::", target) and len("".join(content).strip()) > 0:
+      for inst in ["double", "casadi::SXElem"]:
+        t = re.sub(r"\bMatrix\s*<\s*Scalar\s*>", "Matrix< %s >" % inst, target)
+        t = re.sub(r"\bScalar\b", inst, re.sub(r"^(\s*casadi::)Matrix\s*::", r"\1Matrix< %s >::" % inst, t))
+        self.add_text_original(["%feature(\"docstring\") ", t, " \"\n\n"]+content+["\";\n","\n"])
+    # Doxygen files Matrix docs under the SX/DM typedefs when a specialization exists
+    m_td = re.match(r"(\s*casadi::)(SX|DM)::", target)
+    if correction and m_td and len("".join(content).strip()) > 0:
+      for inst in ["double", "casadi::SXElem"]:
+        t = target.replace(m_td.group(0), m_td.group(1) + "Matrix< %s >::" % inst, 1)
+        self.add_text_original(["%feature(\"docstring\") ", t, " \"\n\n"]+content+["\";\n","\n"])
     labels = ["SparsityInterface","Matrix","GenericMatrix","GenericExpression"]
     for label in labels:
       target = re.sub(r"\b" + label + " *<[\w ]+>",label+"Common", target)
@@ -530,16 +634,19 @@ class Doxy2SWIG_X(Doxy2SWIG):
       self.add_text_original(["%feature(\"docstring\") ", target, " \"\n\n"]+content+["\";\n","\n"])
     if not correction or "Internal" in target or "::" not in target: return
     m = re.search(r"\b(\w+)\(",target)
-    if m:
-      if m.group(1) in expression_tools:
+    cls = target.split("(")[0].split("::")[-2].replace(" ", "") if target.split("(")[0].count("::") >= 2 else ""
+    if m and cls.startswith(tool_classes):  # skip namespace helpers and unrelated class members
+      name = renamed_tools.get(m.group(1), m.group(1))
+      if name in expression_tools and name not in self.routed:
         content = [c.replace("[INTERNAL]","") for c in content]
         if "Functions called by friend functions defined" in " ".join(content):
             content = []
         content = [re.sub("Functions called by friend functions defined (here|for +\w+)\.?","",c) for c in content]
-        self.doc_target("casadi::casadi_" + m.group(1), content,correction=False)
+        if "".join(content).strip(): self.routed.add(name)
+        self.doc_target("casadi::casadi_" + name, content,correction=False)
         target = target.split("(")[0]
         target = "::".join(target.split("::")[:-1])
-        self.doc_target(target + "::casadi_" + m.group(1), content,correction=False)
+        self.doc_target(target + "::casadi_" + name, content,correction=False)
 
 def convert(input, output,  include_function_definition=True, quiet=False,internal=None,deprecated=None,merge=False,groupdoc=None):
     p = Doxy2SWIG_X(input, include_function_definition, quiet,internal=internal,deprecated=deprecated,merge=merge,groupdoc=groupdoc)

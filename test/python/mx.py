@@ -3732,6 +3732,23 @@ class MXtests(casadiTestCase):
     self.checkfunction(f,F,inputs=[x0])
     self.check_codegen(F,inputs=[x0])
 
+  def test_det_singular(self):
+    X = ca.MX.sym("x",3,3)
+    F = ca.Function('F',[X],[ca.det(X)])
+    for A in [numpy.zeros((3,3)), numpy.ones((3,3)), numpy.array([[1,2,3],[2,4,6],[0,0,1.]])]:
+      self.checkarray(F(A), 0, digits=12)
+      self.check_codegen(F,inputs=[A])
+
+  def test_find(self):
+    for sp, nz, ref in [(ca.Sparsity.dense(5, 1), [0, 0, 4, 0, 1], 2),
+                        (ca.Sparsity.triplet(5, 1, [1, 3], [0, 0]), [0, 7], 3),
+                        (ca.Sparsity.triplet(5, 1, [1, 3], [0, 0]), [0, 0], 5)]:
+      x = ca.MX.sym("x", sp)
+      f = ca.Function("f", [x], [ca.find(x)])
+      x0 = ca.DM(sp, nz)
+      self.checkarray(f(x0), ref)
+      self.check_codegen(f, inputs=[x0])
+
   @memory_heavy()
   def test_det_solvers(self):
     # Determinant through the linear-solver plugins, across sizes and a sparse pattern
@@ -4387,6 +4404,51 @@ class MXtests(casadiTestCase):
           self.checkarray(A,Ac,digits=8)
 
 
+  def test_convexify_large(self):
+    # issue #3169: blocks beyond 100 overflowed fixed-size work arrays
+    np.random.seed(1)
+    for n in [3, 120]:
+      B = np.random.randn(n,n)
+      A = ca.DM(B+B.T)
+      [D,V] = np.linalg.eigh(np.array(A))
+      As = ca.MX.sym("As",A.sparsity())
+      for strategy, Dm in [("eigen-reflect",ca.fmax(abs(D),1e-7)), ("eigen-clip",ca.fmax(D,1e-7))]:  # pyright: ignore[reportCallIssue,reportArgumentType]
+        f = ca.Function("f",[As],[ca.convexify(As,{"strategy":strategy,"max_iter_eig":2000})])
+        self.checkarray(f(A), V @ ca.diag(Dm) @ V.T, digits=8)  # pyright: ignore[reportCallIssue,reportArgumentType]
+        if n<10: self.check_codegen(f,inputs=[A])
+
+  def test_repmat_slice(self):
+    # issue #4190
+    x = ca.MX.sym("x",2)
+    y = ca.repmat(x,1,2)
+    self.assertTrue((y[:,0]-y[:,1]).is_zero())
+    self.assertTrue(ca.is_equal(y[:,1], x))
+    xs = ca.SX.sym("x",2)
+    X = ca.MX.sym("X",ca.Sparsity.lower(2))
+    Xs = ca.SX.sym("X",ca.Sparsity.lower(2))
+    for a, b in [(x, xs), (X, Xs)]:
+      f = ca.Function("f",[a],[ca.repmat(a,1,3)[:,[2,0,1]], ca.repmat(a,1,3)[[1,0],[1,2]], ca.repmat(a,1,3).nz[[5,0,2,1]]])
+      f_ref = ca.Function("f",[b],[ca.repmat(b,1,3)[:,[2,0,1]], ca.repmat(b,1,3)[[1,0],[1,2]], ca.repmat(b,1,3).nz[[5,0,2,1]]])
+      self.checkfunction(f,f_ref,inputs=[ca.DM(np.random.random(a.nnz()))] if a.is_dense() else [ca.DM(a.sparsity(),np.random.random(a.nnz()))])
+    # Non-vector, sparse (empty rows/columns) and all-zero inputs, horizontal and 2-D repeats
+    sps = [ca.Sparsity.dense(2,3), ca.Sparsity.triplet(3,3,[0,2,1],[0,0,2]),
+           ca.Sparsity.triplet(3,2,[0,2,2],[0,0,1]), ca.Sparsity(2,3)]
+    for sp in sps:
+      for m, n in [(1,3),(2,2)]:
+        def slices(a):
+          Y = ca.repmat(a,m,n)
+          R, C = Y.shape
+          return [Y[:,list(range(C))[::-1]], Y[list(range(R))[::-1],:], Y[[R-1,0],[C-1,0]],
+                  Y.nz[list(range(Y.nnz()))[::-1]], Y.T]
+        a = ca.MX.sym("a",sp)
+        b = ca.SX.sym("a",sp)
+        Y = ca.repmat(a,m,n)
+        w = Y.shape[1]//n
+        self.assertTrue((Y[:,w*(n-1):]-Y[:,:w]).is_zero())
+        f = ca.Function("f",[a],slices(a))
+        f_ref = ca.Function("f",[b],slices(b))
+        self.checkfunction(f,f_ref,inputs=[ca.DM(sp,np.random.random(sp.nnz()))])
+
   def test_logsumexp(self):
     x = ca.MX.sym("x",3)
 
@@ -4402,6 +4464,22 @@ class MXtests(casadiTestCase):
     # Avoid overflow
     res = f(ca.vertcat(100,1000,10000))
     self.checkarray(res,10000)
+
+  def test_logsumexp_scalar(self):
+    x = ca.MX.sym("x")
+    margin = ca.MX.sym("margin")
+    f = ca.Function("f",[x,margin],[ca.logsumexp(x,margin)])
+    f_ref = ca.Function("f_ref",[x,margin],[x])
+
+    for value,width in [(-3,0.1),(0,1),(3,2)]:
+      self.checkarray(f(value,width),value)
+    self.checkfunction(f,f_ref,inputs=[3,0.1])
+    self.check_codegen(f,inputs=[3,0.1])
+
+    f_pair = ca.Function("f_pair",[x,margin],[ca.logsumexp(ca.vertcat(x,x),margin)])
+    self.checkarray(f_pair(3,0.1),3.1)
+    with self.assertInException("Argument must be dense"):
+      ca.logsumexp(ca.MX(ca.Sparsity(1,1)),0.1)
 
   def test_empty_broadcast(self):
     for nc in [0,2]:
@@ -5311,6 +5389,80 @@ class MXtests(casadiTestCase):
                     self.assertEqual(H.sparsity_jac(0,0).nnz(), 2)
                     # qn is non-diff output: no dependencies
                     self.assertEqual(H.sparsity_jac(0,1).nnz(), 0)
+
+  def test_is_nonnegative_binary(self):
+    x = ca.MX.sym("x")
+    y = ca.MX.sym("y")
+    # fabs(e) -> e for nonnegative e, binary operations included
+    for e in [x<y, x<=y, x==y, x!=y, ca.logic_and(x,y), ca.logic_or(x,y), ca.hypot(x,y), ca.sqrt(x)]:
+      self.assertTrue(ca.is_equal(ca.fabs(e), e))
+    for e in [x+y, x*y, x-y]:
+      self.assertFalse(ca.is_equal(ca.fabs(e), e))
+
+  def test_chained_inequality_kept(self):
+    y = ca.MX.sym("y")
+    # On-the-fly simplification keeps chained inequalities, explicit simplification folds them
+    for e in [0<=(y<=1), (1>=y)>=0]:
+      self.assertFalse(e.is_constant())
+      f = ca.Function("f",[y],[e]).transform([["simplify",0,"ref_count"]])
+      self.assertTrue(f.call([y],True,False)[0].is_one())
+
+  def test_linear_slice_assign(self):
+    Y0 = ca.MX.sym("Y", 3, 3)
+    Y = ca.MX(Y0)
+    Y[:] = 1
+    self.checkarray(ca.Function("f", [Y0], [Y])(ca.DM.zeros(3, 3)), ca.DM.ones(3, 3))
+    Z0 = ca.MX.sym("Z", 3, 3)
+    Z = ca.MX(Z0)
+    Z[4] = 1
+    f = ca.Function("f", [Z0], [Z])
+    self.checkarray(f(ca.DM.zeros(3, 3)), ca.DM([[0, 0, 0], [0, 1, 0], [0, 0, 0]]))
+
+  def test_bspline_checks(self):
+    x = ca.MX.sym("x")
+    knots = [[0, 0, 0, 0, 1, 1, 1, 1]]
+    with self.assertInException("Expected 4 coefficients, but got 2"):
+      ca.bspline(x, ca.DM([1, 2]), knots, [3], 1, {})
+    with self.assertInException("Unknown option 'foo'"):
+      ca.bspline(x, ca.DM([1, 2, 3, 4]), knots, [3], 1, {"foo": 1})
+
+  def test_user_errors(self):
+    x = ca.MX.sym("x", 2)
+    y = ca.MX.sym("y")
+    with self.assertInException("Expected a column vector with 3 nonzeros"):
+      ca.MX(ca.Sparsity.lower(2), ca.DM([1, 2]))
+    with self.assertInException("Expected a primitive of dimension"):
+      ca.vertcat(x, y).join_primitives([ca.DM.ones(3, 1), ca.DM(1)])
+    with self.assertInException("Expected 2 arguments, but got 1"):
+      (x[0]*y).eval_mx([y])
+    with self.assertInException("Not a binary operation"):
+      ca.MX.binary(999, y, y)
+    A = ca.MX.sym("A", 4)
+    with self.assertInException("Length of B must match dim_b"):
+      ca.MX.einstein(A, A, [2, 2], [3, 2], [2], [-1, -2], [-2, -3], [-1])
+    with self.assertInException("A must be a dense vector"):
+      ca.MX.einstein(ca.MX.sym("A", 2, 2), A, [2, 2], [2, 2], [2], [-1, -2], [-2, -3], [-1])
+    with self.assertInException("Expected 2 query vectors, but got 1"):
+      ca.MX.interpn_linear([ca.MX(ca.DM([0, 1])), ca.MX(ca.DM([0, 1]))], ca.MX.sym("v", 4), [y])
+    with self.assertInException("Grid must be a dense vector"):
+      ca.low(ca.MX.sym("v", ca.Sparsity.lower(2)), 0.5)
+    with self.assertInException("Expected 2 row indices, but got 3"):
+      x.enlarge(4, 1, [0, 1, 2], [0])
+    with self.assertInException("multiple of the number of dimensions"):
+      ca.MX.bspline_dual([0.5, 0.5, 0.1], [[0, 0, 0, 0, 1, 1, 1, 1]]*2, [3, 3])
+
+  def test_unary_op_check(self):
+    y = ca.MX.sym("y")
+    for op in [ca.OP_ADD, 999]:
+      with self.assertInException("Not a unary operation"):
+        ca.MX.unary(op, y)
+
+  def test_print_operator_args(self):
+    x = ca.MX.sym("x")
+    y = ca.MX.sym("y")
+    with self.assertInException("Expected 2 argument names, but got 1"):
+      ca.print_operator(x+y, ["a"])
+    self.assertEqual(ca.print_operator(ca.sin(x), ["a", "b"]), "sin(a)")
 
   def test_set_precision(self):
     # Issue #4326: numeric MX constants honor DM::set_precision

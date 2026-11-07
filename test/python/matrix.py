@@ -1072,6 +1072,25 @@ class Matrixtests(casadiTestCase):
     with self.assertInException("CasADi matrices are not iterable"):
       iter(a)
 
+    # issue #2756: iteration protocol expects TypeError for non-iterables
+    for x in [a, ca.SX.sym("x",2), ca.MX.sym("x",2)]:
+      with self.assertRaises(TypeError):
+        iter(x)
+
+  def test_toarray(self):
+    # issue #2951: toarray avoids a transpose; check layout and values
+    A = ca.DM([[1,2,0],[0,4,5]])
+    for a in [A, ca.sparsify(A), ca.tril(ca.DM([[1,2],[3,4]])), ca.DM([1,2,3]), ca.DM([1,2,3]).T, ca.DM(3), ca.DM(3,0), ca.DM(0,3)]:
+      r = a.toarray()
+      assert isinstance(r, np.ndarray)
+      self.assertTrue(r.flags["C_CONTIGUOUS"])
+      self.assertEqual(r.shape, a.shape)
+      self.checkarray(r, np.array(a.full()))
+    v = ca.DM([1,2,3]).toarray(True)
+    assert isinstance(v, np.ndarray)
+    self.assertEqual(v.shape, (3,))
+    self.assertEqual(ca.DM(3).toarray(True), 3.0)
+
   def test_from_file(self):
     a = ca.sparsify(ca.DM([[1,0,-6,5,0],[4,0,-4e-301,9.3e-18,0]]))
 
@@ -1324,6 +1343,34 @@ class Matrixtests(casadiTestCase):
     self.checkarray(res0,res1)
     
 
+  def test_logsumexp_empty(self):
+    with self.assertInException("Argument must be nonempty"):
+      ca.logsumexp(ca.DM(0, 1))
+
+  def test_linspace_nsteps(self):
+    for n in [0, -1]:
+      with self.assertInException("must be at least 1"):
+        ca.linspace(ca.DM(0), ca.DM(1), n)
+
+  def test_densify_value(self):
+    self.checkarray(ca.densify(ca.DM(ca.Sparsity.diag(2), 1), 5), ca.DM([[1, 5], [5, 1]]))
+
+  def test_polyval_sparse(self):
+    self.checkarray(ca.polyval(ca.DM([1, 2]), ca.DM(ca.Sparsity.diag(2), 1)),
+      ca.DM([[3, 2], [2, 3]]))
+    x = ca.MX.sym("x")
+    f = ca.Function("f", [x], [ca.polyval(ca.MX(ca.DM([[1, 2]])), x)])
+    self.checkarray(f(3), ca.DM(5))
+
+  def test_det_empty_column(self):
+    self.checkarray(ca.det(ca.DM(ca.Sparsity.triplet(2, 2, [0, 1], [0, 0]), [1, 2])), ca.DM(0))
+
+  def test_negative_size_checks(self):
+    with self.assertInException("must be a multiple of n"):
+      ca.repsum(ca.DM([1, 2, 3]), 2)
+    with self.assertInException("Dimensions must be non-negative"):
+      ca.MX.sym("x", -1, 1)
+
   def test_inplace(self):
     n = 10
     x = ca.MX.sym("x",n)
@@ -1331,6 +1378,68 @@ class Matrixtests(casadiTestCase):
     f = ca.Function('f',[x],[y])
     self.assertTrue(f.sz_w()==n)
 
+
+  def test_split_n_zero(self):
+    x = ca.DM.ones(2, 4)
+    with self.assertInException("must be a multiple of n"):
+      ca.horzsplit_n(x, 0)
+    with self.assertInException("must be a multiple of n"):
+      ca.vertsplit_n(x.T, 0)
+
+  def test_diagsplit_offset_lengths(self):
+    with self.assertInException("offset1 and offset2 must have the same length"):
+      ca.diagsplit(ca.DM.ones(4, 4), 1, 2)
+
+  def test_vertcat_columns(self):
+    with self.assertInException("Mismatching number of columns"):
+      ca.vertcat(ca.DM.ones(1, 2), ca.DM.ones(1, 3))
+    with self.assertInException("Mismatching number of columns"):
+      ca.blockcat([[ca.DM(1), ca.DM(2)], [ca.DM(3)]])
+    self.assertEqual(ca.blockcat([[ca.DM(1), ca.DM(2)], [ca.DM.ones(1, 2)]]).shape, (2, 2))
+
+  def test_split_user_errors(self):
+    x = ca.DM.ones(2, 4)
+    for offset in [[1, 4], [0, 3, 2, 4]]:
+      with self.assertInException("must start at 0, be nondecreasing and end at 4"):
+        ca.horzsplit(x, offset)
+    for incr in [0, -1]:
+      with self.assertInException("must be positive"):
+        ca.horzsplit(x, incr)
+    with self.assertInException("must be positive"):
+      ca.blocksplit(ca.DM.ones(4, 4), 0, 2)
+    with self.assertInException("must start at 0, be nondecreasing and end at 4"):
+      ca.diagsplit(ca.DM.ones(4, 4), [0, 1, 3], [0, 2, 4])
+    with self.assertInException("Reshape mismatch"):
+      ca.reshape(ca.DM.eye(2), ca.Sparsity.dense(4, 2))
+    with self.assertInException("sparsity_cast"):
+      ca.sparsity_cast(ca.DM.eye(2), ca.Sparsity.dense(3, 1))
+
+  def test_repmat_negative(self):
+    with self.assertInException("must be non-negative"):
+      ca.repmat(ca.DM([1, 2]), -1)
+
+  def test_blockcat_empty_diagsplit_offblock(self):
+    self.assertEqual(ca.blockcat([]).shape, (0, 0))
+    self.assertEqual(ca.blockcat([[]]).shape, (0, 0))
+    self.assertEqual(ca.blockcat([[], [ca.DM(1)]]).shape, (1, 1))
+    for X in [ca.DM([[1, 2], [3, 4]]), ca.SX.sym("x", 2, 2), ca.Sparsity.dense(2, 2)]:
+      with self.assertInException("outside the diagonal blocks"):
+        ca.diagsplit(X, 1)
+    with self.assertInException("outside the diagonal blocks is unsupported"):
+      ca.diagsplit(ca.MX.sym("x", 2, 2), 1)
+
+  def test_triplet_empty(self):
+    self.assertEqual(ca.DM.triplet([], [], ca.DM(0, 1)).shape, (0, 0))
+
+  def test_triplet_default_size(self):
+    A = ca.DM.triplet([0, 1], [1, 0], ca.DM([5, 6]))
+    self.assertEqual(A.shape, (2, 2))
+    self.checkarray(A, ca.DM([[0, 5], [6, 0]]))
+
+  def test_eye_negative(self):
+    for X in [ca.DM, ca.SX, ca.MX]:
+      with self.assertRaisesRegex(Exception, "Dimensions must be non-negative"):
+        X.eye(-1)
 
   def test_horzsplit_n(self):
     self.assertTrue(len(ca.horzsplit_n(ca.DM.rand(1,6),2))==2)

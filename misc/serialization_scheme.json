@@ -1,5 +1,5 @@
 {
-  "casadi_version": "3.8.1",
+  "casadi_version": "3.8.2",
   "class_versions": {
     "AlpaqaInterface": [
       1
@@ -32,7 +32,7 @@
       2
     ],
     "Conic": [
-      4
+      6
     ],
     "ConoptInterface": [
       1
@@ -50,6 +50,9 @@
       1
     ],
     "Dump": [
+      1
+    ],
+    "Erk": [
       1
     ],
     "External": [
@@ -152,7 +155,7 @@
       1
     ],
     "Nlpsol": [
-      5
+      6
     ],
     "OnnxFunction": [
       2
@@ -193,8 +196,14 @@
     "Rootfinder": [
       3
     ],
+    "Rosenbrock": [
+      1
+    ],
     "RungeKutta": [
       2
+    ],
+    "RuntimeIntegrator": [
+      1
     ],
     "SLEQPInterface": [
       1
@@ -269,13 +278,32 @@
     "Conic": {
       "Conic::equality": [
         3,
-        4
+        4,
+        5,
+        6
       ],
       "Conic::error_on_fail": [
         1
       ],
+      "Conic::sens_force_equality": [
+        6
+      ],
+      "Conic::sens_linsol": [
+        5,
+        6
+      ],
+      "Conic::sens_linsol_options": [
+        5,
+        6
+      ],
+      "Conic::sens_min_lam": [
+        5,
+        6
+      ],
       "Conic::solver_version_check": [
-        4
+        4,
+        5,
+        6
       ]
     },
     "CvodesInterface": {
@@ -526,32 +554,41 @@
     "Nlpsol": {
       "Nlpsol::detect_simple_bounds_is_simple": [
         3,
-        5
+        5,
+        6
       ],
       "Nlpsol::detect_simple_bounds_parts": [
         3,
-        5
+        5,
+        6
       ],
       "Nlpsol::detect_simple_bounds_target_x": [
         3,
-        5
+        5,
+        6
       ],
       "Nlpsol::equality": [
-        5
+        5,
+        6
       ],
       "Nlpsol::error_on_fail": [
         1,
         2
       ],
+      "Nlpsol::sens_force_equality": [
+        6
+      ],
       "Nlpsol::sens_linsol": [
         2,
         3,
-        5
+        5,
+        6
       ],
       "Nlpsol::sens_linsol_options": [
         2,
         3,
-        5
+        5,
+        6
       ]
     },
     "OnnxFunction": {
@@ -883,7 +920,9 @@
       1,
       2,
       3,
-      4
+      4,
+      5,
+      6
     ],
     "ConoptInterface": [
       1
@@ -903,6 +942,9 @@
       1
     ],
     "Dump": [
+      1
+    ],
+    "Erk": [
       1
     ],
     "External": [
@@ -1032,7 +1074,8 @@
       2,
       3,
       4,
-      5
+      5,
+      6
     ],
     "OnnxFunction": [
       1,
@@ -1078,8 +1121,14 @@
     "Rootfinder": [
       3
     ],
+    "Rosenbrock": [
+      1
+    ],
     "RungeKutta": [
       2
+    ],
+    "RuntimeIntegrator": [
+      1
     ],
     "SLEQPInterface": [
       1
@@ -2255,7 +2304,7 @@
           "minimum": 1,
           "name": "Conic",
           "op": "version",
-          "value": 4
+          "value": 6
         },
         {
           "name": "Conic::discrete",
@@ -2311,6 +2360,58 @@
             [
               "literal",
               4
+            ]
+          ],
+          "op": "if"
+        },
+        {
+          "body": [
+            {
+              "name": "Conic::sens_min_lam",
+              "op": "field",
+              "type": "double"
+            },
+            {
+              "name": "Conic::sens_linsol",
+              "op": "field",
+              "type": "std::string"
+            },
+            {
+              "name": "Conic::sens_linsol_options",
+              "op": "field",
+              "type": "Dict"
+            }
+          ],
+          "condition": [
+            "greater_equal",
+            [
+              "version",
+              "Conic"
+            ],
+            [
+              "literal",
+              5
+            ]
+          ],
+          "op": "if"
+        },
+        {
+          "body": [
+            {
+              "name": "Conic::sens_force_equality",
+              "op": "field",
+              "type": "bool"
+            }
+          ],
+          "condition": [
+            "greater_equal",
+            [
+              "version",
+              "Conic"
+            ],
+            [
+              "literal",
+              6
             ]
           ],
           "op": "if"
@@ -3263,6 +3364,22 @@
           "name": "Einstein::n_iter",
           "op": "field",
           "type": "casadi_int"
+        }
+      ],
+      "Erk::serialize_body": [
+        {
+          "layout": "RuntimeIntegrator::serialize_body",
+          "op": "call"
+        },
+        {
+          "name": "Erk",
+          "op": "version",
+          "value": 1
+        },
+        {
+          "name": "Erk::method",
+          "op": "field",
+          "type": "std::string"
         }
       ],
       "External::serialize_body": [
@@ -7509,7 +7626,7 @@
           "minimum": 1,
           "name": "Nlpsol",
           "op": "version",
-          "value": 5
+          "value": 6
         },
         {
           "name": "Nlpsol::nx",
@@ -7671,6 +7788,27 @@
             [
               "literal",
               2
+            ]
+          ],
+          "op": "if"
+        },
+        {
+          "body": [
+            {
+              "name": "Nlpsol::sens_force_equality",
+              "op": "field",
+              "type": "bool"
+            }
+          ],
+          "condition": [
+            "greater_equal",
+            [
+              "version",
+              "Nlpsol"
+            ],
+            [
+              "literal",
+              6
             ]
           ],
           "op": "if"
@@ -9157,6 +9295,27 @@
           "op": "call"
         }
       ],
+      "Rosenbrock::serialize_body": [
+        {
+          "layout": "RuntimeIntegrator::serialize_body",
+          "op": "call"
+        },
+        {
+          "name": "Rosenbrock",
+          "op": "version",
+          "value": 1
+        },
+        {
+          "name": "Rosenbrock::init_tol",
+          "op": "field",
+          "type": "double"
+        },
+        {
+          "name": "Rosenbrock::init_max_iter",
+          "op": "field",
+          "type": "casadi_int"
+        }
+      ],
       "RungeKutta::serialize_body": [
         {
           "layout": "FixedStepIntegrator::serialize_body",
@@ -9166,6 +9325,93 @@
           "name": "RungeKutta",
           "op": "version",
           "value": 2
+        }
+      ],
+      "RuntimeIntegrator::serialize_body": [
+        {
+          "layout": "Integrator::serialize_body",
+          "op": "call"
+        },
+        {
+          "name": "RuntimeIntegrator",
+          "op": "version",
+          "value": 1
+        },
+        {
+          "name": "RuntimeIntegrator::group_start",
+          "op": "field",
+          "type": {
+            "element": "casadi_int",
+            "name": "std::vector"
+          }
+        },
+        {
+          "name": "RuntimeIntegrator::nx_err",
+          "op": "field",
+          "type": "casadi_int"
+        },
+        {
+          "name": "RuntimeIntegrator::nz_err",
+          "op": "field",
+          "type": "casadi_int"
+        },
+        {
+          "name": "RuntimeIntegrator::nq_err",
+          "op": "field",
+          "type": "casadi_int"
+        },
+        {
+          "name": "RuntimeIntegrator::sp_jac",
+          "op": "field",
+          "type": {
+            "element": "Sparsity",
+            "name": "std::vector"
+          }
+        },
+        {
+          "name": "RuntimeIntegrator::step_size",
+          "op": "field",
+          "type": "double"
+        },
+        {
+          "name": "RuntimeIntegrator::abstol",
+          "op": "field",
+          "type": "double"
+        },
+        {
+          "name": "RuntimeIntegrator::reltol",
+          "op": "field",
+          "type": "double"
+        },
+        {
+          "name": "RuntimeIntegrator::step0",
+          "op": "field",
+          "type": "double"
+        },
+        {
+          "name": "RuntimeIntegrator::max_step_size",
+          "op": "field",
+          "type": "double"
+        },
+        {
+          "name": "RuntimeIntegrator::min_step_size",
+          "op": "field",
+          "type": "double"
+        },
+        {
+          "name": "RuntimeIntegrator::max_num_steps",
+          "op": "field",
+          "type": "casadi_int"
+        },
+        {
+          "name": "RuntimeIntegrator::max_tape_steps",
+          "op": "field",
+          "type": "casadi_int"
+        },
+        {
+          "name": "RuntimeIntegrator::quad_err_con",
+          "op": "field",
+          "type": "bool"
         }
       ],
       "SLEQPInterface::serialize_body": [
@@ -11267,6 +11513,12 @@
                             "op": "call"
                           }
                         ],
+                        "erk": [
+                          {
+                            "layout": "Erk::serialize_body",
+                            "op": "call"
+                          }
+                        ],
                         "idas": [
                           {
                             "layout": "IdasInterface::serialize_body",
@@ -11276,6 +11528,12 @@
                         "rk": [
                           {
                             "layout": "RungeKutta::serialize_body",
+                            "op": "call"
+                          }
+                        ],
+                        "rosenbrock": [
+                          {
+                            "layout": "Rosenbrock::serialize_body",
                             "op": "call"
                           }
                         ]

@@ -22,10 +22,7 @@
 #
 #   minimize{y,z} Vchain(y, z)
 #   subject to    z_i - 0.1*y_i >= 0.5
-const _jl_dir = get(ENV, "CASADI_JL",
-    joinpath(@__DIR__, "..", "..", "..", "julia-proto", "casadi-contact"))
-include(joinpath(_jl_dir, "CasADiNative.jl"))
-import .CasADiNative as ca
+import CasADiNative as ca
 
 function main()
     # Constants
@@ -71,7 +68,7 @@ function main()
     end
 
     # Formulate QP
-    qp = Dict("x" => ca.vertcat(x), "f" => Vchain, "g" => ca.vertcat(g))
+    qp = Dict("x" => vcat(x...), "f" => Vchain, "g" => vcat(g...))
 
     # Solve with qpoases
     solver = ca.qpsol("solver", "qpoases", qp, Dict("sparse" => true))

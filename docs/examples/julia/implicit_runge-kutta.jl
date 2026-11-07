@@ -23,10 +23,7 @@
 # The python reference cvodes integrator is dropped (no sundials here); the
 # block-extraction uses 1-based slicing instead of vertsplit (which the Julia
 # binding does not yet marshal).
-const _jl_dir = get(ENV, "CASADI_JL",
-    joinpath(@__DIR__, "..", "..", "..", "julia-proto", "casadi-contact"))
-include(joinpath(_jl_dir, "CasADiNative.jl"))
-import .CasADiNative as ca
+import CasADiNative as ca
 
 # End time
 tf = 10.0
@@ -40,9 +37,9 @@ x = ca.SX.sym("x", nx)   # state
 p = ca.SX.sym("u", nu)   # control
 
 # ODE right hand side function
-ode = ca.vertcat((1 - x[2] * x[2]) * x[1] - x[2] + p,
-              x[1],
-              x[1] * x[1] + x[2] * x[2] + p * p)
+ode = [((1 - x[2] * x[2]) * x[1] - x[2] + p);
+       x[1];
+       (x[1] * x[1] + x[2] * x[2] + p * p)]
 f = ca.Function("f", [x, p], [ode])
 
 # Number of finite elements
@@ -102,7 +99,7 @@ function build_F()
     end
 
     # Root-finding function, implicitly defines V as a function of X0 and P
-    vfcn = ca.Function("vfcn", [V, X0, P], [ca.vertcat(V_eq)])
+    vfcn = ca.Function("vfcn", [V, X0, P], [vcat(V_eq...)])
     vfcn_sx = ca.expand(vfcn)   # convert to SX to decrease overhead
 
     # Implicit function instance solving the collocation system

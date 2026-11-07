@@ -24,6 +24,7 @@
 
 
 #include "nlpsol_impl.hpp"
+#include "conic_impl.hpp"
 #include "external.hpp"
 #include "casadi/core/timing.hpp"
 #include "nlp_builder.hpp"
@@ -270,6 +271,10 @@ namespace casadi {
   Function nlpsol(const std::string& name, const std::string& solver,
                   const Function& nlp, const Dict& opts) {
     // Make sure that nlp is sound
+    casadi_assert(nlp.name_in()==std::vector<std::string>({"x", "p"})
+      && nlp.name_out()==std::vector<std::string>({"f", "g"}),
+      "Cannot create '" + name + "': the NLP function must have inputs (x, p) and outputs "
+      "(f, g), got " + str(nlp.name_in()) + " and " + str(nlp.name_out()) + ".");
     if (nlp.has_free()) {
       casadi_error("Cannot create '" + name + "' since " + str(nlp.get_free()) + " are free.");
     }
@@ -355,6 +360,7 @@ namespace casadi {
     calc_multipliers_ = false;
     bound_consistency_ = false;
     min_lam_ = 0;
+    sens_force_equality_ = false;
     calc_lam_x_ = calc_f_ = calc_g_ = false;
     calc_lam_p_ = true;
     no_nlp_grad_ = false;
@@ -477,6 +483,10 @@ namespace casadi {
       {"sens_linsol_options",
        {OT_DICT,
         "Linear solver options used for parametric sensitivities."}},
+      {"sens_force_equality",
+       {OT_BOOL,
+        "Treat constraints with equal bounds as active in parametric sensitivities, "
+        "regardless of the multiplier, see issue #2545 [false]."}},
       {"detect_simple_bounds",
        {OT_BOOL,
         "Automatically detect simple bounds (lbx/ubx) (default false). "
@@ -564,6 +574,8 @@ namespace casadi {
         sens_linsol_ = op.second.to_string();
       } else if (op.first=="sens_linsol_options") {
         sens_linsol_options_ = op.second;
+      } else if (op.first=="sens_force_equality") {
+        sens_force_equality_ = op.second;
       }
     }
 
@@ -994,22 +1006,11 @@ namespace casadi {
     MX JG = HJ_res.at(0);
     MX HL = HJ_res.at(1);
 
-    // Active set (assumed known and given by the multiplier signs)
-    MX ubIx = lam_x > min_lam_;
-    MX lbIx = lam_x < -min_lam_;
-    MX bIx = ubIx + lbIx;
-    MX iIx = 1-bIx;
-    MX ubIg = lam_g > min_lam_;
-    MX lbIg = lam_g < -min_lam_;
-    MX bIg = ubIg + lbIg;
-    MX iIg = 1-bIg;
-
-    // KKT matrix
-    MX H_11 = mtimes(diag(iIx), HL) + diag(bIx);
-    MX H_12 = mtimes(diag(iIx), JG.T());
-    MX H_21 = mtimes(diag(bIg), JG);
-    MX H_22 = diag(-iIg);
-    MX H = MX::blockcat({{H_11, H_12}, {H_21, H_22}});
+    // KKT matrix, active set given by the multiplier signs
+    MX lbIx, ubIx, lbIg, ubIg;
+    MX H = Conic::sens_kkt(HL, JG, lam_x, lam_g, lbx, ubx, lbg, ubg, min_lam_,
+                           sens_force_equality_, lbIx, ubIx, lbIg, ubIg);
+    MX iIx = 1-ubIx-lbIx, bIg = ubIg+lbIg;
 
     // Sensitivity inputs
     std::vector<MX> fseed(NLPSOL_NUM_IN);
@@ -1125,22 +1126,11 @@ namespace casadi {
     MX JG = HJ_res.at(0);
     MX HL = HJ_res.at(1);
 
-    // Active set (assumed known and given by the multiplier signs)
-    MX ubIx = lam_x > min_lam_;
-    MX lbIx = lam_x < -min_lam_;
-    MX bIx = ubIx + lbIx;
-    MX iIx = 1-bIx;
-    MX ubIg = lam_g > min_lam_;
-    MX lbIg = lam_g < -min_lam_;
-    MX bIg = ubIg + lbIg;
-    MX iIg = 1-bIg;
-
-    // KKT matrix
-    MX H_11 = mtimes(diag(iIx), HL) + diag(bIx);
-    MX H_12 = mtimes(diag(iIx), JG.T());
-    MX H_21 = mtimes(diag(bIg), JG);
-    MX H_22 = diag(-iIg);
-    MX H = MX::blockcat({{H_11, H_12}, {H_21, H_22}});
+    // KKT matrix, active set given by the multiplier signs
+    MX lbIx, ubIx, lbIg, ubIg;
+    MX H = Conic::sens_kkt(HL, JG, lam_x, lam_g, lbx, ubx, lbg, ubg, min_lam_,
+                           sens_force_equality_, lbIx, ubIx, lbIg, ubIg);
+    MX iIx = 1-ubIx-lbIx, bIg = ubIg+lbIg;
 
     // Sensitivity inputs
     std::vector<MX> aseed(NLPSOL_NUM_OUT);
@@ -1380,7 +1370,7 @@ namespace casadi {
       g << "d->arg[3] = " << d_nlp << ".lam+" << str(nx_) << ";\n";
       g << "d->res[0] = " << (calc_f_ ? "&" + d_nlp + ".objective" : "0") << ";\n";
       g << "d->res[1] = " << (calc_g_ ? d_nlp + ".z+" + str(nx_) : "0") << ";\n";
-      g << "d->res[2] = " << (calc_lam_x_ ? d_nlp + ".lam+" + str(nx_) : "0") << ";\n";
+      g << "d->res[2] = " << (calc_lam_x_ ? d_nlp + ".lam" : "0") << ";\n";
       g << "d->res[3] = " << (calc_lam_p_ ? d_nlp + ".lam_p" : "0") << ";\n";
       std::string nlp_grad = g(get_function("nlp_grad"), "d->arg", "d->res", "d->iw", "d->w");
       g << "if (" << nlp_grad << ") return 1;\n";
@@ -1409,7 +1399,7 @@ namespace casadi {
   void Nlpsol::serialize_body(SerializingStream &s) const {
     OracleFunction::serialize_body(s);
 
-    s.version("Nlpsol", 5);
+    s.version("Nlpsol", 6);
     s.pack("Nlpsol::nx", nx_);
     s.pack("Nlpsol::ng", ng_);
     s.pack("Nlpsol::np", np_);
@@ -1431,6 +1421,7 @@ namespace casadi {
     s.pack("Nlpsol::mi", mi_);
     s.pack("Nlpsol::sens_linsol", sens_linsol_);
     s.pack("Nlpsol::sens_linsol_options", sens_linsol_options_);
+    s.pack("Nlpsol::sens_force_equality", sens_force_equality_);
     s.pack("Nlpsol::detect_simple_bounds_is_simple", detect_simple_bounds_is_simple_);
     s.pack("Nlpsol::detect_simple_bounds_parts", detect_simple_bounds_parts_);
     s.pack("Nlpsol::detect_simple_bounds_target_x", detect_simple_bounds_target_x_);
@@ -1446,7 +1437,7 @@ namespace casadi {
   }
 
   Nlpsol::Nlpsol(DeserializingStream & s) : OracleFunction(s) {
-    int version = s.version("Nlpsol", 1, 5);
+    int version = s.version("Nlpsol", 1, 6);
     s.unpack("Nlpsol::nx", nx_);
     s.unpack("Nlpsol::ng", ng_);
     s.unpack("Nlpsol::np", np_);
@@ -1476,6 +1467,11 @@ namespace casadi {
       s.unpack("Nlpsol::sens_linsol_options", sens_linsol_options_);
     } else {
       sens_linsol_ = "qr";
+    }
+    if (version>=6) {
+      s.unpack("Nlpsol::sens_force_equality", sens_force_equality_);
+    } else {
+      sens_force_equality_ = false;
     }
 
     if (version>=3) {

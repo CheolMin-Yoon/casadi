@@ -19,10 +19,7 @@
 # Exercise 1, chapter 10 from Larry Biegler's book: collocation solution of the
 # scalar ODE dz/dt = z^2 - 2z + 1 with z(0) = -3, swept over N = 1..10 finite
 # elements. Lagrange-polynomial collocation coefficients are built symbolically.
-const _jl_dir = get(ENV, "CASADI_JL",
-    joinpath(@__DIR__, "..", "..", "..", "julia-proto", "casadi-contact"))
-include(joinpath(_jl_dir, "CasADiNative.jl"))
-import .CasADiNative as ca
+import CasADiNative as ca
 
 function main()
     println("program started")
@@ -93,7 +90,7 @@ function main()
                 push!(g, Z[i + 1, 1] - rhs)
             end
         end
-        gg = ca.vertcat(g)
+        gg = vcat(g...)
 
         # NLP
         nlp = Dict("x" => x, "f" => x[1]^2, "g" => gg)

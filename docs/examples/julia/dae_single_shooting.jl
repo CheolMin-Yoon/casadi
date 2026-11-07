@@ -24,10 +24,7 @@
 #                x0(0)==0, x1(0)==1, x0(10)==0, x1(10)==0, -0.75 <= u <= 1
 #
 # "collocation" stands in for the python "idas" integrator (no sundials here).
-const _jl_dir = get(ENV, "CASADI_JL",
-    joinpath(@__DIR__, "..", "..", "..", "julia-proto", "casadi-contact"))
-include(joinpath(_jl_dir, "CasADiNative.jl"))
-import .CasADiNative as ca
+import CasADiNative as ca
 
 # Declare variables
 x = ca.SX.sym("x", 2)   # Differential states
@@ -35,7 +32,7 @@ z = ca.SX.sym("z")      # Algebraic variable
 u = ca.SX.sym("u")      # Control
 
 # Differential equation
-f_x = ca.vertcat(z * x[1] - x[2] + u, x[1])
+f_x = [(z * x[1] - x[2] + u); x[1]]
 
 # Algebraic equation
 f_z = x[2]^2 + z - 1

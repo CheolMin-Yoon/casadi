@@ -267,6 +267,13 @@ namespace casadi {
     alloc(jtimes_);
   }
 
+  Dict KinsolInterface::get_stats(void* mem) const {
+    Dict stats = Rootfinder::get_stats(mem);
+    auto m = static_cast<KinsolMemory*>(mem);
+    stats["return_status"] = m->return_status;
+    return stats;
+  }
+
   int KinsolInterface::solve(void* mem) const {
     auto m = static_cast<KinsolMemory*>(mem);
 
@@ -275,6 +282,9 @@ namespace casadi {
 
     // Solve the nonlinear system of equations
     int flag = KINSol(m->mem, m->u, strategy_, u_scale_, f_scale_);
+    char* flagname = KINGetReturnFlagName(flag);
+    m->return_status = flagname;
+    free(flagname);  // NOLINT
     m->success = flag>= KIN_SUCCESS;
     if (flag<KIN_SUCCESS) kinsol_error("KINSol", flag, error_on_fail_);
     if (flag==KIN_MAXITER_REACHED) m->unified_return_status = SOLVER_RET_LIMITED;
@@ -538,8 +548,9 @@ namespace casadi {
       N_VScale(1.0, b, x);
       s.psolve(*m, u, uscale, fval, fscale, x, tmp1);
 
-      // Calculate residuals
-      int flag = KINSpilsAtimes(kin_mem, x, b);
+      // Calculate residuals without accessing SPILS-specific linear solver memory
+      int new_u = TRUE;
+      int flag = jtimes_wrapper(x, b, u, &new_u, m);
       if (flag) return flag;
       *sJpnorm = N_VWL2Norm(b, fscale);
       N_VProd(b, fscale, b);

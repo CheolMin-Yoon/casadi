@@ -838,6 +838,23 @@ class OptiStacktests(inherit_from):  # pyright: ignore[reportGeneralTypeIssues]
 
         self.checkarray(sol.value(P), R)
 
+    def test_symm_parameter(self):
+        # issue #2911
+        opti = ca.Opti()
+        Q = opti.parameter(2, 2, 'symmetric')
+        x = opti.variable(2)
+        opti.minimize(ca.bilin(Q, x, x) - ca.sum1(x))
+        opti.solver(nlpsolver,nlpsolver_options)
+        Qv = ca.DM([[3,1],[1,2]])
+        opti.set_value(Q, Qv)
+        sol = opti.solve()
+        self.checkarray(sol.value(Q), Qv)
+        self.checkarray(sol.value(x), ca.solve(2*Qv, ca.DM.ones(2)), digits=6)
+        with self.assertInException("not even square"):
+          opti.parameter(2, 3, 'symmetric')
+        with self.assertInException("Unknown attribute"):
+          opti.parameter(2, 2, 'foo')
+
     def test_broadcast(self):
         opti = ca.Opti()
         
@@ -881,6 +898,23 @@ class OptiStacktests(inherit_from):  # pyright: ignore[reportGeneralTypeIssues]
         with self.assertInException("Constraint shape mismatch."):
           opti.subject_to(ca.vertcat(1,2,3)==x[0])
 
+
+    def test_parametric_constraint(self):
+        # issue #3837
+        opti = ca.Opti()
+        x = opti.variable()
+        p = opti.parameter()
+        opti.set_value(p, -1)
+        opti.minimize((x-1)**2)
+        for c in [p<=0, -ca.inf<=(p<=0), -1<=(p<=0)]:
+          with self.assertInException("Constraint must contain decision variables."):
+            opti.subject_to(c)
+        # A rejected constraint leaves the stack intact
+        opti.subject_to(x<=p+3)
+        opti.solver(nlpsolver,nlpsolver_options)
+        sol = opti.solve()
+        self.checkarray(sol.value(x), 1, digits=6)
+        self.assertEqual(opti.ng, 1)
 
     def test_value(self):
         opti = ca.Opti()
@@ -1511,6 +1545,32 @@ class OptiStacktests(inherit_from):  # pyright: ignore[reportGeneralTypeIssues]
             #data["g2"] = sol.value(opti.dual(g2))
             print(data)
 
+
+    def test_value_sx(self):
+        opti = ca.Opti()
+        self.checkarray(opti.value(ca.SX(3)), ca.DM(3))
+        with self.assertInException("Opti works with MX"):
+            opti.value(ca.SX.sym("z"))
+
+    def test_subject_to_unknown(self):
+        opti = ca.Opti()
+        x = opti.variable()
+        y = opti.variable()
+        with self.assertInException("Constraint type unknown"):
+            opti.subject_to(x+y)
+
+    def test_optisol_no_debug(self):
+        self.assertFalse(hasattr(ca.OptiSol, "debug"))
+
+    def test_describe_range(self):
+        opti = ca.Opti()
+        x = opti.variable()
+        y = opti.variable()
+        opti.minimize(x**2+y**2)
+        with self.assertInException("Index 5 out of range for 2 decision variables"):
+            opti.debug.x_describe(5)
+        with self.assertInException("Index 0 out of range for 0 constraints"):
+            opti.debug.g_describe(0)
 
     @requires_nlpsol("ipopt")
     def test_issue4020(self):

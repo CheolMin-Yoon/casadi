@@ -65,27 +65,27 @@ jobs:
           
     - name: generate Python 3
       run: >
-        docker run --rm -v`pwd`:/local ghcr.io/casadi/ci-swig:latest /bin/bash -c
+        docker run --rm -v`pwd`:/local ghcr.io/casadi/ci-swig:v4 /bin/bash -c
         "mkdir build && cd build && cmake -DWITH_SELFCONTAINED=ON -DWITH_PYTHON=ON -DSWIG_EXPORT=ON -DWITH_COMMON=OFF -DWITH_PYTHON_GIL_RELEASE=OFF .. && make python_source && cd .. && rm -rf build"
 
     - name: generate Python 3
       run: >
-        docker run --rm -v`pwd`:/local ghcr.io/casadi/ci-swig:latest /bin/bash -c
+        docker run --rm -v`pwd`:/local ghcr.io/casadi/ci-swig:v4 /bin/bash -c
         "mkdir build && cd build && cmake -DWITH_SELFCONTAINED=ON -DWITH_PYTHON=ON -DSWIG_EXPORT=ON -DWITH_COMMON=OFF -DWITH_PYTHON_GIL_RELEASE=ON .. && make python_source && cd .. && rm -rf build"
   
     - name: generate Matlab
       run: >
-        docker run --rm -v`pwd`:/local ghcr.io/casadi/ci-swig:latest /bin/bash -c
+        docker run --rm -v`pwd`:/local ghcr.io/casadi/ci-swig:v4 /bin/bash -c
         "mkdir build && cd build && cmake -DWITH_SELFCONTAINED=ON -DWITH_MATLAB=ON -DSWIG_EXPORT=ON -DWITH_COMMON=OFF .. && make matlab_source && cd .. && rm -rf build"
     
     - name: generate wasm-js
       run: >
-        docker run --rm -v`pwd`:/local ghcr.io/casadi/ci-swig:latest /bin/bash -c
+        docker run --rm -v`pwd`:/local ghcr.io/casadi/ci-swig:v4 /bin/bash -c
         "mkdir build && cd build && cmake -DWITH_WASM_JS=ON -DSWIG_EXPORT=ON -DWITH_COMMON=OFF .. && make wasm_source && cd .. && rm -rf build"
 
     - name: generate julia
       run: >
-        docker run --rm -v`pwd`:/local ghcr.io/casadi/ci-swig:latest /bin/bash -c
+        docker run --rm -v`pwd`:/local ghcr.io/casadi/ci-swig:v4 /bin/bash -c
         "mkdir build && cd build && cmake -DWITH_JULIA=ON -DSWIG_EXPORT=ON -DWITH_COMMON=OFF .. && make julia_source && cd .. && rm -rf build"
 
     - name: set CMAKE default options
@@ -287,21 +287,11 @@ jobs:
           # runner can't supply MATLAB/SPRAL, hence build_flags_julia_off.
           cmake -Bbuild -DCMAKE_BUILD_TYPE=Release -DWITH_JULIA=ON -DSWIG_IMPORT=ON ${{ env.build_flags }} ${{ env.build_flags_julia_off }} -H.
           cmake --build build -j$(nproc)
-      - name: Run Julia test suite
+      - name: Julia checks (precompiled package, method overwrites, Aqua, examples, doctests)
         run: |
-          export CASADI_JL=$PWD/build/swig/julia/CasADiNative
           # casadi finds plugins via CASADI_PLUGIN_SEARCH_PATH (NOT LD_LIBRARY_PATH)
-          export CASADI_PLUGIN_SEARCH_PATH=$PWD/build/lib
-          LD_LIBRARY_PATH=$PWD/build/lib julia test/julia/runtests.jl
-      - name: Run docs/examples/julia
-        run: |
-          export CASADI_JL=$PWD/build/swig/julia/CasADiNative
-          export CASADI_PLUGIN_SEARCH_PATH=$PWD/build/lib
-          export LD_LIBRARY_PATH=$PWD/build/lib
-          for f in docs/examples/julia/*.jl; do
-            echo "== julia $f =="
-            julia "$f"
-          done
+          export CASADI_PLUGIN_SEARCH_PATH=$PWD/build/lib LD_LIBRARY_PATH=$PWD/build/lib
+          test/julia/package/check.sh build/swig/julia/CasADiNative $RUNNER_TEMP/jl-current full
       - name: Assemble CasADiNative artifact (Artifacts.toml-ready tarball)
         run: |
           cp LICENSE.txt build/swig/julia/CasADiNative/
@@ -310,6 +300,18 @@ jobs:
         with:
           name: casadi-julia-linux64
           path: casadi-julia-linux64.tar.gz
+      - name: Julia checks on older supported versions (wrapper rebuilt per version)
+        run: |
+          # same core build; only the wrapper is recompiled against each Julia's headers
+          export CASADI_PLUGIN_SEARCH_PATH=$PWD/build/lib LD_LIBRARY_PATH=$PWD/build/lib
+          for v in 1.10 1.11 1.12; do
+            jl=$RUNNER_TEMP/julia-$v && mkdir -p $jl
+            curl -fsSL https://julialang-s3.julialang.org/bin/linux/x64/$v/julia-$v-latest-linux-x86_64.tar.gz | tar -xz -C $jl --strip-components=1
+            cmake -Bbuild -DJULIA_INCLUDE_DIR=$jl/include/julia
+            cmake --build build --target casadi_julia -j$(nproc)
+            # header doctests on the oldest only
+            JULIA=$jl/bin/julia test/julia/package/check.sh build/swig/julia/CasADiNative $RUNNER_TEMP/jl-$v $([ $v = 1.10 ] && echo full)
+          done
 
   publish-npm:
     needs: [version, javascript]
@@ -387,7 +389,7 @@ jobs:
     strategy:
      fail-fast: false
      matrix:
-       image: ["windows-2022","ubuntu-24.04","macos-14"]
+       image: ["windows-2022","ubuntu-24.04","macos-15"]
     steps:
       - uses: actions/checkout@v6.0.2
       - run: python --version
@@ -414,7 +416,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [macos-14]
+        image: [macos-15]
         # x86_64 is slow-mode-only — default mode's python-osx and matlab-osx
         # don't consume the x86_64 core.
         target: ${{ fromJson(contains(github.event.head_commit.message, '[ci:run_slow]') && '["arm64","x86_64"]' || '["arm64"]') }}
@@ -564,7 +566,7 @@ jobs:
         with:
           config: |
             matrix:
-              image: [macos-14]
+              image: [macos-15]
               target: [arm64]
               py2: ["311"]
             operations: []
@@ -574,13 +576,13 @@ jobs:
         with:
           config: |
             matrix:
-              image: [macos-14]
+              image: [macos-15]
               target: [x86_64]
               py2: ["37","38","39","310","311"]
             operations:
               - type: append
                 matrix:
-                  image: [macos-14]
+                  image: [macos-15]
                   target: [arm64]
                   py2: ["38","39","310","311"]
     outputs:
@@ -707,14 +709,14 @@ jobs:
         with:
           config: |
             matrix:
-              image: [macos-14]
+              image: [macos-15]
               target: [arm64]
               host: ["matlab"]
               version: ["2018b"]
             operations:
               - type: append
                 matrix:
-                  image: [macos-14]
+                  image: [macos-15]
                   target: [arm64]
                   host: ["octave"]
                   version: ["7.3.0"]
@@ -725,26 +727,26 @@ jobs:
         with:
           config: |
             matrix:
-              image: [macos-14]
+              image: [macos-15]
               target: [x86_64]
               host: ["matlab"]
               version: ["2018b"]
             operations:
               - type: append
                 matrix:
-                  image: [macos-14]
+                  image: [macos-15]
                   target: [x86_64]
                   host: ["octave"]
                   version: ["7.3.0"]
               - type: append
                 matrix:
-                  image: [macos-14]
+                  image: [macos-15]
                   target: [arm64]
                   host: ["matlab"]
                   version: ["2018b"]
               - type: append
                 matrix:
-                  image: [macos-14]
+                  image: [macos-15]
                   target: [arm64]
                   host: ["octave"]
                   version: ["7.3.0"]
@@ -788,7 +790,7 @@ jobs:
           key: "${{matrix.image}}"
           map: |
            {
-              "macos-14": {"os": "osx", "bitness": "64"}
+              "macos-15": {"os": "osx", "bitness": "64"}
            }
           export_to: env
       - uses: jgillis/universal_grafter@master
@@ -1070,7 +1072,7 @@ jobs:
        # macos-15-intel is added only with [ci:run_slow] (cuts release-asset
        # race surface in default mode, and matrix-arch-matlab-mac doesn't build
        # x86_64 zips in default anyway).
-       image: ${{ fromJson(contains(github.event.head_commit.message, '[ci:run_slow]') && '["windows-2022","ubuntu-24.04","macos-15-intel","macos-14"]' || '["windows-2022","ubuntu-24.04","macos-14"]') }}
+       image: ${{ fromJson(contains(github.event.head_commit.message, '[ci:run_slow]') && '["windows-2022","ubuntu-24.04","macos-15-intel","macos-15"]' || '["windows-2022","ubuntu-24.04","macos-15"]') }}
        bit: [64]
        exclude:
         # No Windows 32bit builds currently
@@ -1089,7 +1091,7 @@ jobs:
               "windows-2022": {"os": "windows", "suffix": "${{matrix.bit}}"},
               "ubuntu-24.04": {"os": "linux", "suffix": "${{matrix.bit}}"},
               "macos-15-intel": {"os": "osx", "suffix": "-x86_64"},
-              "macos-14": {"os": "osx", "suffix": "-arm64"}
+              "macos-15": {"os": "osx", "suffix": "-arm64"}
            }
           export_to: env
       - uses: actions/download-artifact@v8.0.1
@@ -1118,6 +1120,11 @@ jobs:
         with:
           source-folder: docs/examples/matlab
           select-by-tag: examples
+
+      - name: Run MATLAB doctests of the C++ headers
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('docs/api/extra'); doctest_matlab('casadi')
       - uses: casadi/commercial_solvers@master
         with:
           token: ${{ secrets.JGILLIS_RESTRICTED }}
@@ -1145,7 +1152,7 @@ jobs:
      matrix:
        version: ["7.3.0"]
        # macos-15-intel only with [ci:run_slow] (mirrors test-matlab).
-       image: ${{ fromJson(contains(github.event.head_commit.message, '[ci:run_slow]') && '["windows-2022","ubuntu-24.04","macos-15-intel","macos-14"]' || '["windows-2022","ubuntu-24.04","macos-14"]') }}
+       image: ${{ fromJson(contains(github.event.head_commit.message, '[ci:run_slow]') && '["windows-2022","ubuntu-24.04","macos-15-intel","macos-15"]' || '["windows-2022","ubuntu-24.04","macos-15"]') }}
        bit: [64]
     steps:
       - uses: actions/checkout@v6.0.2
@@ -1157,7 +1164,7 @@ jobs:
               "windows-2022": {"os": "windows", "suffix": "${{matrix.bit}}"},
               "ubuntu-24.04": {"os": "linux", "suffix": "${{matrix.bit}}"},
               "macos-15-intel": {"os": "osx", "suffix": "-x86_64"},
-              "macos-14": {"os": "osx", "suffix": "-arm64"}
+              "macos-15": {"os": "osx", "suffix": "-arm64"}
            }
           export_to: env
       - uses: actions/download-artifact@v8.0.1
@@ -1182,6 +1189,8 @@ jobs:
       - run: echo "MATLABPATH=${{ github.workspace }}/casadi" >> $GITHUB_ENV
         if: "!contains(env.os, 'windows')"
       - run: cd test && python internal/test_octave.py octave && python internal/test_octave.py matlab -skipfiles="solvers.m callback.m nlp_callback.m export_tests.m asorted_tests.m CasadiTests.m"
+      - name: Run Octave doctests of the C++ headers
+        run: octave --no-gui --no-window-system --eval "addpath('${{ github.workspace }}/casadi'); addpath('docs/api/extra'); doctest_matlab('casadi')"
       - uses: casadi/commercial_solvers@master
         with:
           token: ${{ secrets.JGILLIS_RESTRICTED }}
@@ -1287,7 +1296,7 @@ jobs:
               # isn't built by matrix-arch-py2-mac nominal, and skipping it
               # here also cuts release-upload concurrency.
               py2: ["314"]
-              image: ["windows-2022","macos-14"]
+              image: ["windows-2022","macos-15"]
               bit: [64]
               manylinux_target: [""]
             operations:
@@ -1317,7 +1326,7 @@ jobs:
               - type: append
                 matrix:
                   py2: ["38","39","310","311","313","314"]
-                  image: ["windows-2022","macos-15-intel","macos-14"]
+                  image: ["windows-2022","macos-15-intel","macos-15"]
                   bit: [64]
                   manylinux_target: [""]
               - type: append
@@ -1355,7 +1364,7 @@ jobs:
               "ubuntu-24.04$": {"os": "linux", "suffix": "${{matrix.bit}}"},
               "ubuntu-24.04-arm": {"os": "linux", "suffix": "-aarch64"},
               "macos-15-intel": {"os": "osx", "suffix": "-x86_64"},
-              "macos-14": {"os": "osx", "suffix": "-arm64"}
+              "macos-15": {"os": "osx", "suffix": "-arm64"}
            }
           export_to: env
       - uses: actions/download-artifact@v8.0.1
@@ -1411,6 +1420,12 @@ jobs:
           python alltests.py
         shell: pwsh
         if: contains(matrix.image, 'windows')
+      - name: Run Python doctests of the C++ headers
+        env:
+          PYTHONPATH: ${{ github.workspace }}/casadi
+        run: python docs/api/extra/doctest_headers.py --lang python
+        shell: bash -el {0}
+        if: matrix.image == 'ubuntu-24.04' && matrix.py2 == '314'
 
   matrix-test-python-long:
     runs-on: ubuntu-24.04
@@ -1435,7 +1450,7 @@ jobs:
           config: |
             matrix:
               py2: ["312"]
-              image: ["windows-2022","macos-14","macos-15-intel"]
+              image: ["windows-2022","macos-15","macos-15-intel"]
               bit: [64]
               manylinux_target: [""]
             operations:
@@ -1467,7 +1482,7 @@ jobs:
               "windows-2022": {"os": "windows","suffix": "${{matrix.bit}}","platform":"win_amd64"},
               "ubuntu-24.04$": {"os": "linux","suffix": "${{matrix.bit}}","platform":"manylinux2014_x86_64"},
               "macos-15-intel": {"os": "osx","suffix": "-x86_64","platform":"macosx_11_0_x86_64.macosx_11_0_intel"},
-              "macos-14": {"os": "osx","suffix": "-arm64","platform":"macosx_11_0_arm64"}
+              "macos-15": {"os": "osx","suffix": "-arm64","platform":"macosx_11_0_arm64"}
            }
           export_to: env
       - name: Override wheel platform tag for manylinux_2_28 builds

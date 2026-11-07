@@ -19,10 +19,7 @@
 # Forward, adjoint and finite-difference sensitivity analysis of an ODE
 # integrated over a fixed interval. As in the JS port, the sundials cvodes/idas
 # variants are dropped and only rk/collocation are exercised.
-const _jl_dir = get(ENV, "CASADI_JL",
-    joinpath(@__DIR__, "..", "..", "..", "julia-proto", "casadi-contact"))
-include(joinpath(_jl_dir, "CasADiNative.jl"))
-import .CasADiNative as ca
+import CasADiNative as ca
 
 println("Testing sensitivity analysis in CasADi")
 println("******")
@@ -31,12 +28,12 @@ println("Testing ODE example")
 t = ca.SX.sym("t")               # time
 u = ca.SX.sym("u")               # parameter
 s = ca.SX.sym("s"); v = ca.SX.sym("v"); m = ca.SX.sym("m")   # differential states
-x = ca.vertcat(s, v, m)
+x = [s; v; m]
 
 alpha = 0.05                   # friction
 beta = 0.1                     # fuel consumption rate
 
-ode = ca.vertcat(v, (u - alpha * v * v) / m, -beta * u * u)
+ode = [v; ((u - alpha * v * v) / m); (-beta * u * u)]
 quad = v^3 + ((3 - sin(t)) - u)^2
 dae = Dict("t" => t, "x" => x, "p" => u, "ode" => ode, "quad" => quad)
 

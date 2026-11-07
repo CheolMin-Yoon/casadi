@@ -98,7 +98,8 @@ namespace casadi {
         own(ConstantMX::create(Sparsity(sp.size()), 0));
       }
     } else {
-      casadi_assert_dev(val.is_column() && sp.nnz()==val.size1());
+      casadi_assert(val.is_column() && sp.nnz()==val.size1(),
+        "Expected a column vector with " + str(sp.nnz()) + " nonzeros, but got " + val.dim() + ".");
       *this = densify(val)->get_nzref(sp, range(sp.nnz()));
     }
   }
@@ -314,7 +315,7 @@ namespace casadi {
 
   void MX::set(const MX& m, bool ind1, const Slice& rr) {
     // Fall back on IM
-    set(m, ind1, rr.all(size1(), ind1));
+    set(m, ind1, rr.all(numel(), ind1));
   }
 
   void MX::set(const MX& m, bool ind1, const Matrix<casadi_int>& rr) {
@@ -531,6 +532,7 @@ namespace casadi {
   }
 
   MX MX::binary(casadi_int op, const MX &x, const MX &y, bool unique_x, bool unique_y) {
+    casadi_assert(casadi_math<double>::is_binary(op), "Not a binary operation: " + str(op));
     // Check, correct dimensions
     if (x.size()!=y.size() && !x.is_scalar() && !y.is_scalar()) {
       // x and y are horizontal multiples of each other?
@@ -558,6 +560,7 @@ namespace casadi {
   }
 
   MX MX::unary(casadi_int op, const MX &x, bool unique) {
+    casadi_assert(casadi_math<double>::is_unary(op), "Not a unary operation: " + str(op));
     return x->get_unary(Operation(op), unique);
   }
 
@@ -1205,10 +1208,7 @@ namespace casadi {
 
   std::vector<MX> MX::horzsplit(const MX& x, const std::vector<casadi_int>& offset) {
     // Consistency check
-    casadi_assert_dev(!offset.empty());
-    casadi_assert_dev(offset.front()==0);
-    casadi_assert_dev(offset.back()==x.size2());
-    casadi_assert_dev(is_monotone(offset));
+    check_offset(offset, x.size2(), "horzsplit");
 
     // Trivial return if possible
     if (offset.size()==1) {
@@ -1223,16 +1223,10 @@ namespace casadi {
   std::vector<MX> MX::diagsplit(const MX& x, const std::vector<casadi_int>& offset1,
                                 const std::vector<casadi_int>& offset2) {
     // Consistency check
-    casadi_assert_dev(!offset1.empty());
-    casadi_assert_dev(offset1.front()==0);
-    casadi_assert_dev(offset1.back()==x.size1());
-    casadi_assert_dev(is_monotone(offset1));
-
-    // Consistency check
-    casadi_assert_dev(!offset2.empty());
-    casadi_assert_dev(offset2.front()==0);
-    casadi_assert_dev(offset2.back()==x.size2());
-    casadi_assert_dev(is_monotone(offset2));
+    check_offset(offset1, x.size1(), "diagsplit");
+    check_offset(offset2, x.size2(), "diagsplit");
+    casadi_assert(offset1.size()==offset2.size(),
+      "diagsplit: offset1 and offset2 must have the same length");
 
     return x->get_diagsplit(offset1, offset2);
   }
@@ -1240,10 +1234,7 @@ namespace casadi {
   std::vector<MX> MX::vertsplit(const MX& x, const std::vector<casadi_int>& offset) {
     if (x.is_column()) {
       // Consistency check
-      casadi_assert_dev(!offset.empty());
-      casadi_assert_dev(offset.front()==0);
-      casadi_assert_dev(offset.back()==x.size1());
-      casadi_assert_dev(is_monotone(offset));
+      check_offset(offset, x.size1(), "vertsplit");
 
       // Trivial return if possible
       if (offset.size()==1) {
@@ -1487,8 +1478,8 @@ namespace casadi {
   }
 
   MX MX::polyval(const MX& p, const MX& x) {
-    casadi_assert(p.is_dense(), "polynomial coefficients vector must be a vector");
-    casadi_assert(p.is_column() && p.nnz()>0, "polynomial coefficients must be a vector");
+    casadi_assert(p.is_dense(), "polynomial coefficients vector must be dense");
+    casadi_assert(p.is_vector() && p.nnz()>0, "polynomial coefficients must be a vector");
     MX ret = p.nz(0);
     for (casadi_int i=1; i<p.nnz(); ++i) {
       ret = ret*x + p.nz(i);
@@ -1497,6 +1488,8 @@ namespace casadi {
   }
 
   std::string MX::print_operator(const MX& x, const std::vector<std::string>& args) {
+    casadi_assert(args.size()>=x.n_dep(),
+      "Expected " + str(x.n_dep()) + " argument names, but got " + str(args.size()) + ".");
     return x->disp(args);
   }
 
@@ -3155,8 +3148,9 @@ namespace casadi {
       }
     }
 
-    casadi_assert_dev(xq.size()==n_dim);
-    casadi_assert_dev(v.is_vector());
+    casadi_assert(xq.size()==n_dim,
+      "Expected " + str(n_dim) + " query vectors, but got " + str(xq.size()) + ".");
+    casadi_assert(v.is_vector(), "Expected a vector of values, but got " + v.dim() + ".");
 
     // Extract grid dimensions
     std::vector<casadi_int> x_dims;
@@ -3222,6 +3216,8 @@ namespace casadi {
  void MX::eval_mx(const std::vector<MX>& arg, std::vector<MX>& res,
     const std::vector<bool>& unique) const {
    try {
+     casadi_assert(arg.size()==n_dep(),
+       "Expected " + str(n_dep()) + " arguments, but got " + str(arg.size()) + ".");
      res.resize((*this)->nout());
      (*this)->eval_mx(arg, res, unique);
    } catch (std::exception& e) {

@@ -18,17 +18,14 @@
 #
 # Minimal-effort rocket ascent: a single-shooting NLP over the controls of a
 # 1-D rocket (position, speed, mass) integrated with explicit Euler.
-const _jl_dir = get(ENV, "CASADI_JL",
-    joinpath(@__DIR__, "..", "..", "..", "julia-proto", "casadi-contact"))
-include(joinpath(_jl_dir, "CasADiNative.jl"))
-import .CasADiNative as ca
+import CasADiNative as ca
 
 u = ca.MX.sym("u")               # control
 x = ca.MX.sym("x", 3)            # state
 s = x[1]; v = x[2]; m = x[3]   # position, speed, mass
 
 # ODE right-hand side
-xdot = ca.vertcat(v, (u - 0.05 * v * v) / m, -0.1 * u * u)
+xdot = [v; ((u - 0.05 * v * v) / m); (-0.1 * u * u)]
 f = ca.Function("f", [x, u], [xdot])
 
 function main()

@@ -25,10 +25,7 @@
 # "external" solver reproduces the in-memory solver's solution.
 #
 #    min x^2 + y^2   s.t.   x + y - 10 = 0
-const _jl_dir = get(ENV, "CASADI_JL",
-    joinpath(@__DIR__, "..", "..", "..", "julia-proto", "casadi-contact"))
-include(joinpath(_jl_dir, "CasADiNative.jl"))
-import .CasADiNative as ca
+import CasADiNative as ca
 
 function main()
     # Optimization variables
@@ -40,7 +37,7 @@ function main()
     g = x + y - 10
 
     # NLP problem structure
-    nlp = Dict("x" => ca.vertcat(x, y), "f" => f, "g" => g)
+    nlp = Dict("x" => [x; y], "f" => f, "g" => g)
 
     # Common solver arguments
     arg = (lbx = -Inf, ubx = Inf, lbg = 0, ubg = 0, x0 = 0)

@@ -1462,8 +1462,9 @@ namespace casadi {
   Matrix<Scalar> Matrix<Scalar>::triplet(const std::vector<casadi_int>& row,
                                              const std::vector<casadi_int>& col,
                                              const Matrix<Scalar>& d) {
-    return triplet(row, col, d, *std::max_element(row.begin(), row.end()),
-                   *std::max_element(col.begin(), col.end()));
+    casadi_int nrow = row.empty() ? 0 : *std::max_element(row.begin(), row.end()) + 1;
+    casadi_int ncol = col.empty() ? 0 : *std::max_element(col.begin(), col.end()) + 1;
+    return triplet(row, col, d, nrow, ncol);
   }
 
   template<typename Scalar>
@@ -1883,7 +1884,7 @@ namespace casadi {
     Matrix<casadi_int> col_count = Matrix<casadi_int>::sum1(sp).T();
 
     // A blank col? determinant is structurally zero
-    if (!row_count.is_dense()) return 0;
+    if (!col_count.is_dense()) return 0;
 
     casadi_int min_row = std::distance(row_count.nonzeros().begin(),
                                 std::min_element(row_count.nonzeros().begin(),
@@ -2017,7 +2018,8 @@ namespace casadi {
     if (sp==x.sparsity()) return x;
 
     // make sure that the patterns match
-    casadi_assert_dev(sp.is_reshape(x.sparsity()));
+    casadi_assert(sp.is_reshape(x.sparsity()),
+      "Reshape mismatch: cannot reshape " + x.dim() + " to " + sp.dim(true));
 
     return Matrix<Scalar>(sp, x.nonzeros(), false);
   }
@@ -2027,7 +2029,8 @@ namespace casadi {
     // quick return if already the right shape
     if (sp==x.sparsity()) return x;
 
-    casadi_assert_dev(sp.nnz()==x.nnz());
+    casadi_assert(sp.nnz()==x.nnz(), "sparsity_cast: x has " + str(x.nnz()) + " nonzeros, "
+      "but the target pattern has " + str(sp.nnz()));
 
     return Matrix<Scalar>(sp, x.nonzeros(), false);
   }
@@ -2054,7 +2057,8 @@ namespace casadi {
   Matrix<Scalar>::blockcat(const std::vector< std::vector<Matrix<Scalar> > > &v) {
     std::vector< Matrix<Scalar> > ret;
     for (casadi_int i=0; i<v.size(); ++i)
-      ret.push_back(horzcat(v[i]));
+      if (!v[i].empty()) ret.push_back(horzcat(v[i]));
+    if (ret.empty()) return Matrix<Scalar>(0, 0);
     return vertcat(ret);
   }
 
@@ -2099,6 +2103,15 @@ namespace casadi {
 
   template<typename Scalar>
   Matrix<Scalar> Matrix<Scalar>::vertcat(const std::vector<Matrix<Scalar> > &v) {
+    // Consistency check
+    casadi_int ncol = 0;
+    for (auto&& e : v) {
+      if (e.size2()==0) continue;
+      casadi_assert(ncol==0 || e.size2()==ncol, "vertcat: Mismatching number of columns, "
+        "got " + str(ncol) + " and " + str(e.size2()));
+      ncol = e.size2();
+    }
+
     std::vector<Matrix<Scalar> > vT(v.size());
     for (casadi_int i=0; i<v.size(); ++i) vT[i] = v[i].T();
     return horzcat(vT).T();
@@ -2117,16 +2130,10 @@ namespace casadi {
   Matrix<Scalar>::diagsplit(const Matrix<Scalar>& x, const std::vector<casadi_int>& offset1,
                               const std::vector<casadi_int>& offset2) {
     // Consistency check
-    casadi_assert_dev(!offset1.empty());
-    casadi_assert_dev(offset1.front()==0);
-    casadi_assert_dev(offset1.back()==x.size1());
-    casadi_assert_dev(is_monotone(offset1));
-
-    // Consistency check
-    casadi_assert_dev(!offset2.empty());
-    casadi_assert_dev(offset2.front()==0);
-    casadi_assert_dev(offset2.back()==x.size2());
-    casadi_assert_dev(is_monotone(offset2));
+    check_offset(offset1, x.size1(), "diagsplit");
+    check_offset(offset2, x.size2(), "diagsplit");
+    casadi_assert(offset1.size()==offset2.size(),
+      "diagsplit: offset1 and offset2 must have the same length");
 
     // Number of outputs
     casadi_int n = offset1.size()-1;
@@ -2138,6 +2145,15 @@ namespace casadi {
     for (casadi_int i=0; i<n; ++i) {
       ret.push_back(x(Slice(offset1[i], offset1[i+1]), Slice(offset2[i], offset2[i+1])));
     }
+
+    // Entries outside the diagonal blocks must be zero
+    casadi_int n_dropped = 0;
+    for (auto&& e : x.nonzeros()) n_dropped += !casadi_limits<Scalar>::is_zero(e);
+    for (auto&& r : ret) {
+      for (auto&& e : r.nonzeros()) n_dropped -= !casadi_limits<Scalar>::is_zero(e);
+    }
+    casadi_assert(n_dropped==0,
+      "diagsplit: the presence of nonzeros outside the diagonal blocks is unsupported.");
 
     return ret;
   }
@@ -2616,7 +2632,8 @@ namespace casadi {
   Matrix<Scalar> Matrix<Scalar>::polyval(const Matrix<Scalar>& p, const Matrix<Scalar>& x) {
     casadi_assert(p.is_dense(), "polynomial coefficients vector must be dense");
     casadi_assert(p.is_vector() && p.nnz()>0, "polynomial coefficients must be a vector");
-    Matrix<Scalar> ret = x;
+    // Structural zeros of x map to the constant term
+    Matrix<Scalar> ret = casadi_limits<Scalar>::is_zero(p->back()) ? x : densify(x);
     for (auto&& e : ret.nonzeros()) {
       e = casadi_polyval(p.ptr(), p.numel()-1, e);
     }
