@@ -1,4 +1,4 @@
-"""Package an already built CPython 3.12 runtime without rebuilding native code."""
+"""Package an already built CPython runtime (default 3.12) without rebuilding native code."""
 
 from __future__ import annotations
 
@@ -15,16 +15,18 @@ def main() -> None:
     parser.add_argument("version")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--requires", action="append", default=[])
+    parser.add_argument("--python-minor", type=int, default=12, help="CPython 3.N the stage was built for")
     args = parser.parse_args()
+    tag = f"cp3{args.python_minor}"
     name = args.name.replace("-", "_")
     metadata_dir = f"{name}-{args.version}.dist-info"
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    wheel_path = args.output_dir / f"{name}-{args.version}-cp312-cp312-linux_x86_64.whl"
+    wheel_path = args.output_dir / f"{name}-{args.version}-{tag}-{tag}-linux_x86_64.whl"
     metadata = (
         "Metadata-Version: 2.1\n"
         f"Name: {args.name}\n"
         f"Version: {args.version}\n"
-        "Requires-Python: >=3.12,<3.13\n"
+        f"Requires-Python: >=3.{args.python_minor},<3.{args.python_minor + 1}\n"
         + "".join(f"Requires-Dist: {requirement}\n" for requirement in args.requires)
         + "\n"
     )
@@ -35,7 +37,7 @@ def main() -> None:
         archive.writestr(f"{metadata_dir}/METADATA", metadata)
         archive.writestr(
             f"{metadata_dir}/WHEEL",
-            "Wheel-Version: 1.0\nGenerator: local-cmake-build\nRoot-Is-Purelib: false\nTag: cp312-cp312-linux_x86_64\n",
+            f"Wheel-Version: 1.0\nGenerator: local-cmake-build\nRoot-Is-Purelib: false\nTag: {tag}-{tag}-linux_x86_64\n",
         )
     print(wheel_path)
 
